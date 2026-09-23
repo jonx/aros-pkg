@@ -421,6 +421,7 @@ struct plan {
     const char     *stack[32];   /* the path being resolved, for cycles */
     size_t          depth;
     const char     *root, *acceptkey;
+    const char     *key;         /* KEY: the publisher's key for the named package */
     const struct index *ix;
 };
 
@@ -649,6 +650,7 @@ int remove_files(const char *root, const struct pkg_manifest *m,
                  size_t *removed, size_t *kept, size_t *gone, int report);
 int run_plan(struct plan *p, const struct pkg_manifest *cur,
              unsigned long *placed, unsigned long *dropped, unsigned long *kept);
+int pkg_is_key_hex(const char *s);
 int plan_target(struct plan *p, const struct pkg_options *a, const struct index *ix,
                 const char *name, const char *exact);
 size_t find_orphans(const struct installed *in, const char *root, size_t *which);

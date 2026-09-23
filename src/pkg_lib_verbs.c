@@ -1301,11 +1301,11 @@ static int install_many(const struct pkg_options *a)
 
     refused_names[0] = '\0';
     if (need_root_channel(a) != 0) return 1;
-    if (a->version != NULL || a->acceptkey != NULL || a->downgrade)
+    if (a->version != NULL || a->acceptkey != NULL || a->downgrade || a->key != NULL)
         return refuse_c(20, "%s is a decision about one package, never about several at once. "
                         "Give it to INSTALL <name> alone",
                         a->version != NULL ? "VERSION" : a->acceptkey != NULL ? "ACCEPTKEY"
-                                                                             : "DOWNGRADE");
+                        : a->key != NULL ? "KEY" : "DOWNGRADE");
     for (i = 0; i < n; i++) {
         const char *name = i == 0 ? a->target : a->also[i - 1];
         char line[600];
@@ -1935,6 +1935,26 @@ int repair_one(const struct pkg_options *a, const struct index *ix, const char *
     }
     if (fetch(chan_of(e), e, &f) != 0)
         goto out;
+    {
+        /* Files put back come from the key this root trusts, and KEY's. */
+        char pinned[65];
+        if (pinned_key(a->root, m.name, pinned) && strcmp(pinned, f.signer) != 0) {
+            kv("pinned", "%s", pinned);
+            kv("signer", "%s", f.signer);
+            refuse_c(14, "the channel's %s %s is signed by %s, not by the key this root pins, %s; "
+                     "nothing was put back", m.name, m.version, f.signer, pinned);
+            fetched_free(&f);
+            goto out;
+        }
+        if (a->key != NULL && strcmp(a->key, f.signer) != 0) {
+            kv("signer", "%s", f.signer);
+            kv("expected", "%s", a->key);
+            refuse_c(14, "the channel's %s %s is signed by %s, not by the KEY given; nothing was "
+                     "put back", m.name, m.version, f.signer);
+            fetched_free(&f);
+            goto out;
+        }
+    }
     if (!dry_run) {
         c.root = a->root; c.m = &m; c.restored = c.aside = c.left = 0; c.err[0] = '\0';
         if (pkg_read(f.pkg, f.pkg_len, repair_entry, &c, &stopped) != PKG_OK) {

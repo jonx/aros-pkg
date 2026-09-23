@@ -5,7 +5,7 @@
 
 Put missing and changed files back from the channel.
 ```
-pkg REPAIR <name> ROOT <root> [CHANNEL <channel>] [ARCH cpu] [UNPACKED <dir>] [DRYRUN]
+pkg REPAIR <name> ROOT <root> [CHANNEL <channel>] [ARCH cpu] [KEY <public key>] [UNPACKED <dir>] [DRYRUN]
 pkg REPAIR ALL    ROOT <root> [CHANNEL <channel>] [ARCH cpu] [UNPACKED <dir>] [DRYRUN]
 ```
 
@@ -17,7 +17,9 @@ file back. A changed file is not thrown away: it is kept beside as
 `<file>.pkgold` (`aside`), then the original is `restored`. Edited
 configuration files are left alone. A package whose installed version the
 channel no longer offers cannot be repaired from it (exit 11); the others
-are.
+are. Files come back only from the key the root pins for the package, and
+from `KEY` when it is given: a channel whose copy another key signed puts
+nothing back (exit 14).
 
 Without `CHANNEL` it reads the channels the root lists ([CHANNEL](channel.md)), in order; `CHANNEL <channel>` means that channel alone.
 

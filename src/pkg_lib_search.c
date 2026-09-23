@@ -665,10 +665,11 @@ int upgrade_all(const struct pkg_options *a)
     if (a->version != NULL)
         return refuse_c(20, "VERSION names one package's version; UPGRADE ALL takes, for each "
                         "package, the version UPGRADE <name> would take");
-    if (a->downgrade || a->acceptkey != NULL)
+    if (a->downgrade || a->acceptkey != NULL || a->key != NULL)
         return refuse_c(20, "%s is a decision about one package, never about all of them at "
                         "once: UPGRADE ALL never downgrades and never accepts a new key. Give it "
-                        "to UPGRADE <name>", a->downgrade ? "DOWNGRADE" : "ACCEPTKEY");
+                        "to UPGRADE <name>", a->downgrade ? "DOWNGRADE"
+                        : a->key != NULL ? "KEY" : "ACCEPTKEY");
     if (keep_current_setup(a, &ix, &in) != 0) return 1;
     base = target_arch;
     st = (struct standing *)calloc(in.n ? in.n : 1, sizeof *st);

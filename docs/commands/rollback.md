@@ -5,7 +5,7 @@
 
 Return a package to the version installed before.
 ```
-pkg ROLLBACK <name> ROOT <root> [CHANNEL <channel>] [VERSION v] [ARCH cpu] [ACCEPTKEY <key>] [DRYRUN]
+pkg ROLLBACK <name> ROOT <root> [CHANNEL <channel>] [VERSION v] [ARCH cpu] [KEY <public key>] [ACCEPTKEY <key>] [DRYRUN]
 ```
 
 ## What it does

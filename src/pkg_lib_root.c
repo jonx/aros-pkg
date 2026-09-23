@@ -1333,6 +1333,16 @@ out:
     return rc;
 }
 
+/* A publisher key as KEY gives it: 64 lowercase hexadecimal digits. */
+int pkg_is_key_hex(const char *s)
+{
+    size_t i;
+    for (i = 0; i < 64; i++)
+        if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f')))
+            return 0;
+    return s[64] == '\0';
+}
+
 /* The key pinned for a package in this root, and the rule that governs it. */
 static int check_pin(const char *root, const char *name, const char *signer,
                      const char *acceptkey)
@@ -2065,12 +2075,25 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
          * word alone see the previous version, as before). */
         char *pp = root_path(root, "prev", m->name), line[200];
         int n = snprintf(line, sizeof line, "%s\nto %s %s\n", old->version, m->version, verb_name);
-        if (pp == NULL || pkg_fs_write_atomic(pp, line, (size_t)n) != 0)
-            warn("the previous version could not be recorded for ROLLBACK");
+        /* Before the database, a failure stops the change: the files are
+         * placed, the database is the old one, and repeating the command
+         * finishes it once the volume can be written again. */
+        if (pp == NULL || pkg_fs_write_atomic(pp, line, (size_t)n) != 0) {
+            refuse_c(17, "the files are placed but the previous version could not be recorded: "
+                     "%s; the database still names %s %s, and the same command again finishes the "
+                     "change", strerror(errno), old->name, old->version);
+            free(pp);
+            free(staging);
+            return 1;
+        }
         free(pp);
     }
-    if (write_pin(root, m->name, f->signer) != 0)
-        warn("the signing key could not be pinned");
+    if (write_pin(root, m->name, f->signer) != 0) {
+        refuse_c(17, "the files are placed but the signing key could not be pinned: %s; the same "
+                 "command again finishes the change", strerror(errno));
+        free(staging);
+        return 1;
+    }
     dbp = root_path(root, "db", m->name);
     if (dbp == NULL || pkg_fs_write_atomic(dbp, f->mtext, f->mlen) != 0) {
         refuse_c(17, "the files are placed but the database entry could not be written: %s",
@@ -2217,6 +2240,40 @@ static int plan_one(struct plan *p, const char *name, const char *min, const cha
         fetched_free(&f);
         return 1;
     }
+    if (p->key != NULL) {
+        /* KEY says who publishes the named package, and trusts no one else
+         * on the way: a dependency this root has no key for is refused, and
+         * installed first with its own publisher's KEY. */
+        char pinned[65];
+        int have = pinned_key(p->root, e->name, pinned);
+        if (from == NULL && strcmp(f.signer, p->key) != 0) {
+            kv("signer", "%s", f.signer);
+            kv("expected", "%s", p->key);
+            refuse_c(14, "%s %s is signed by %s, not by the KEY given; nothing was changed",
+                     e->name, e->version, f.signer);
+            fetched_free(&f);
+            return 1;
+        }
+        if (from == NULL && have && strcmp(pinned, p->key) != 0
+            && (p->acceptkey == NULL || strcmp(p->acceptkey, p->key) != 0)) {
+            kv("pinned", "%s", pinned);
+            kv("expected", "%s", p->key);
+            refuse_c(14, "this root pins %s for %s, and KEY names %s; nothing was changed. If the "
+                     "publisher confirmed the new key, ACCEPTKEY with it in full accepts it",
+                     pinned, e->name, p->key);
+            fetched_free(&f);
+            return 1;
+        }
+        if (from != NULL && !have) {
+            kv("dependency", "%s %s", e->name, e->version);
+            refuse_n(14, "install-dependency-first", "%s needs %s %s, and this root trusts no key "
+                     "for %s yet: KEY names %s's publisher alone. Nothing was changed; install %s "
+                     "first, with its own publisher's KEY", from, e->name, e->version, e->name,
+                     from, e->name);
+            fetched_free(&f);
+            return 1;
+        }
+    }
     if (check_pin(p->root, e->name, f.signer, p->acceptkey) != 0) {
         fetched_free(&f);
         return 1;
@@ -2239,7 +2296,8 @@ static int plan_one(struct plan *p, const char *name, const char *min, const cha
         if (first && oldest != NULL && oldest != e
             && claimed_signer(chan_of(oldest), oldest->digest, first_signer)
             && strcmp(first_signer, f.signer) != 0
-            && (p->acceptkey == NULL || strcmp(p->acceptkey, f.signer) != 0)) {
+            && (p->acceptkey == NULL || strcmp(p->acceptkey, f.signer) != 0)
+            && (p->key == NULL || strcmp(p->key, f.signer) != 0)) {
             kv("signer", "%s", f.signer);
             kv("first-signer", "%s", first_signer);
             refuse_n(14, "ask-requester", "%s %s is signed by %s, but %s %s, the first version in "
@@ -2410,7 +2468,10 @@ int plan_target(struct plan *p, const struct pkg_options *a, const struct index 
     memset(p, 0, sizeof *p);
     p->root = a->root;
     p->acceptkey = a->acceptkey;
+    p->key = a->key;
     p->ix = ix;
+    if (a->key != NULL && !pkg_is_key_hex(a->key))
+        return refuse_c(20, "KEY is the publisher's public key: 64 lowercase hexadecimal digits");
     /* The caller picked `exact` and traced why. */
     pick_quiet = 1;
     rc = plan_one(p, name, NULL, exact, NULL);

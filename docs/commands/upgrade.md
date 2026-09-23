@@ -8,7 +8,7 @@ update the running pkg executable. `pkg u` is the short form.
 ```
 pkg UPGRADE
 pkg U
-pkg UPGRADE <name> ROOT <root> [CHANNEL <channel>] [VERSION v] [ARCH cpu] [DOWNGRADE] [ACCEPTKEY <key>] [UNPACKED <dir>] [DRYRUN]
+pkg UPGRADE <name> ROOT <root> [CHANNEL <channel>] [VERSION v] [ARCH cpu] [DOWNGRADE] [KEY <public key>] [ACCEPTKEY <key>] [UNPACKED <dir>] [DRYRUN]
 pkg UPGRADE ALL    ROOT <root> [CHANNEL <channel>] [ARCH cpu] [DRYRUN]
 ```
 
@@ -33,6 +33,8 @@ first.
 
 An older version is refused (exit 18) unless `DOWNGRADE` says so. A version
 signed by another key is refused (exit 14) unless `ACCEPTKEY` names it.
+With `KEY`, the new version must be signed by that key and the pin must be
+it, as for [INSTALL](install.md).
 
 `UPGRADE ALL` upgrades every package the channel has a newer version for, a
 package before what depends on it. It never downgrades and never accepts a

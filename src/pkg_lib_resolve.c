@@ -613,6 +613,9 @@ int cmd_repair(const struct pkg_options *a)
 
     if (!a->all && a->target == NULL) return refuse_c(20, "name the package to repair, or REPAIR ALL");
     if (a->root == NULL)    return refuse_c(20, "name the root with ROOT <dir>");
+    if (a->all && a->key != NULL)
+        return refuse_c(20, "KEY is the publisher key of one package; REPAIR ALL checks each against "
+                        "the key this root pins for it. Give KEY to REPAIR <name>");
     if (resolve_arch(a) != 0) return 1;
     if (open_channels(a, &ix) != 0) return 1;
     if (a->all) {

@@ -164,6 +164,8 @@ test-run:
 	@for t in $(UNITS) test_api; do echo "== $$t"; ./build/$$t || exit 1; done
 	@echo "== e2e"
 	@PKG=./build/pkg sh tests/e2e.sh
+	@echo "== key"
+	@PKG=./build/pkg sh tests/key.sh
 	@echo "== interrupt"
 	@PKG=./build/pkg sh tests/interrupt.sh
 	@echo "== deps"

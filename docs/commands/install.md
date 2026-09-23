@@ -5,7 +5,7 @@
 
 Install a package and what it depends on.
 ```
-pkg INSTALL <name>... ROOT <root> [AT <dir>] [CHANNEL <channel>] [VERSION v] [ARCH cpu] [ACCEPTKEY <key>] [UNPACKED <dir>] [DOWNGRADE] [DRYRUN]
+pkg INSTALL <name>... ROOT <root> [AT <dir>] [CHANNEL <channel>] [VERSION v] [ARCH cpu] [KEY <public key>] [ACCEPTKEY <key>] [UNPACKED <dir>] [DOWNGRADE] [DRYRUN]
 ```
 
 ## What it does
@@ -26,6 +26,13 @@ root and records the package in the root's database (`.pkg/`).
 - The first version installed pins the publisher's key for that package;
   a later version signed by another key is refused (exit 14) until
   `ACCEPTKEY <public key>` names the new one. That decision is the person's.
+- `KEY <public key>` says who publishes the package, instead of trusting
+  whoever signed its first version: the version must be signed by it
+  (exit 14), a key already pinned must be it (exit 14; `ACCEPTKEY` with it
+  confirms a change), and it is pinned before the package is placed. It is
+  the key of that package alone, so a dependency this root has no key for
+  is refused (exit 14, `next: install-dependency-first`) and installed
+  first with its own `KEY`.
 - Installing the version already installed succeeds and says so
   (`result: unchanged`); a newer one asks for `UPGRADE` (exit 15).
 - A withdrawn version is not installed unless `VERSION` names it (exit 18).
@@ -44,7 +51,7 @@ See [Application placement](../placement.md) for layout rules and examples.
 `INSTALL a b c` installs each in turn. It goes as far as it can: a name it
 cannot install is reported with its reason, the rest are installed anyway,
 and the exit code is the worst class any of them refused with. `VERSION`,
-`ACCEPTKEY` and `DOWNGRADE` are decisions about one package and are refused
+`KEY`, `ACCEPTKEY` and `DOWNGRADE` are decisions about one package and are refused
 here (exit 20); give them to `INSTALL <name>` alone.
 
 Packages whose files live in one large archive (the contrib channel) gain
@@ -83,6 +90,7 @@ MACHINE` prints as `archive:`.
 | `CHANNEL <dir\|url>` | where the package is published |
 | `VERSION v` | this version instead of the newest |
 | `ARCH cpu` | the root's CPU, when the root has never been told and pkg cannot know it |
+| `KEY <public key>` | the publisher's key, the only one trusted for this package |
 | `ACCEPTKEY <key>` | accept a publisher key other than the one pinned |
 | `UNPACKED <dir>` | read the files from a directory the archive was unpacked into |
 | `DRYRUN` | every check, no write; the result reads `would install` |
