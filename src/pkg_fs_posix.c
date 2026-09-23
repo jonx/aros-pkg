@@ -1847,7 +1847,8 @@ int pkg_net_get(const char *url, const char *dest, char *err, size_t errlen)
         if (loc[0] == '\0') { snprintf(err, errlen, "a redirect with no Location"); rc = -1; break; }
         if (loc[0] == '/') {                     /* same host */
             const char *h = strchr(cur + 8, '/');
-            snprintf(cur, sizeof cur, "%.*s%s", h ? (int)(h - cur) : (int)strlen(cur), cur, loc);
+            size_t prefix = h ? (size_t)(h - cur) : strlen(cur);
+            snprintf(cur + prefix, sizeof cur - prefix, "%s", loc);
         } else {
             snprintf(cur, sizeof cur, "%s", loc);
         }
