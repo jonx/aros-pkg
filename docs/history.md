@@ -253,12 +253,12 @@ while still held, so a root keeps nothing of it. `tests/lock.sh`.
 
 Before it lets go of the lock, pkg writes what the change wrote back to the
 medium and says how, as `flushed:`. On AROS it sends ACTION_FLUSH to the
-root's handler (`flush`); a handler that does not know it has its DOS
-device inhibited and released (`inhibit`), which writes the handler's cache
-and the device back, as FAT's needs. Elsewhere the host keeps its own files
+root's handler (`flush`); a handler that does not know it, as FAT's, is
+reported `no`: pkg never inhibits a volume the running system may live on.
+Elsewhere the host keeps its own files
 (`host`). `flushed: no`, with a warning, means a power cut could still lose
 the change: a caller that needs it to survive one requires another answer.
-Neither is atomic across a power cut; they only shorten the time a
+It is not atomic across a power cut; it only shortens the time a
 finished change lives in a cache.
 
 ### An interrupted change

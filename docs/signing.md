@@ -82,7 +82,14 @@ root, for that package. From then on:
 
 - a version signed by the same key installs, upgrades and repairs as usual;
 - a version signed by **another** key is refused (exit 14), whoever
-  published it and wherever it comes from, and pkg prints both keys.
+  published it and wherever it comes from, and pkg prints both keys;
+- `REPAIR` puts files back only from a version signed by the pinned key.
+
+You can also pin the key before the first install: `KEY <public key>` on
+`INSTALL`, `UPGRADE` or `ROLLBACK` names the publisher you expect, and pkg
+refuses the package if another key signed it. A dependency with no pin yet is
+not covered by that `KEY`: install it first with its own
+([INSTALL](commands/install.md)).
 
 That refusal is the point of the system: it is what stops a channel or a
 mirror from replacing a program under you. It is also what you see when a

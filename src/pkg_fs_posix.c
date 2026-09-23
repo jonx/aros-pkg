@@ -963,62 +963,19 @@ void pkg_fs_unlock_root(void *lock)
 
 #include <dos/dosextens.h>
 
-/* The permanent DOS device whose handler serves lock: a mounted volume
- * label can go away while it is inhibited, and could not be released. */
-static int device_of(BPTR lock, char *out, size_t size)
-{
-    struct FileLock *fl = (struct FileLock *)BADDR(lock);
-    struct DosList *list, *entry;
-    unsigned matches = 0;
-    if (fl == NULL || fl->fl_Task == NULL || size < 3)
-        return 0;
-    list = LockDosList(LDF_DEVICES | LDF_READ);
-    if (list == NULL)
-        return 0;
-    entry = list;
-    while ((entry = NextDosEntry(entry, LDF_DEVICES)) != NULL) {
-        size_t n;
-        if (entry->dol_Task != fl->fl_Task)
-            continue;
-#ifdef AROS_FAST_BSTR
-        n = strlen((const char *)AROS_BSTR_ADDR(entry->dol_Name));
-#else
-        n = AROS_BSTR_strlen(entry->dol_Name);
-#endif
-        if (n == 0 || n + 2 > size) {
-            matches = 2;
-            break;
-        }
-        memcpy(out, AROS_BSTR_ADDR(entry->dol_Name), n);
-        out[n] = ':';
-        out[n + 1] = '\0';
-        matches++;
-    }
-    UnLockDosList(LDF_DEVICES | LDF_READ);
-    return matches == 1;
-}
-
 const char *pkg_fs_flush_root(const char *root)
 {
     BPTR lock = Lock((CONST_STRPTR)root, SHARED_LOCK);
     struct FileLock *fl;
-    char device[64];
-    LONG done, err;
-    int found;
+    LONG done;
     if (lock == BNULL)
         return NULL;
     fl = (struct FileLock *)BADDR(lock);
+    /* A handler without ACTION_FLUSH is not inhibited instead: the running
+     * system may live on that volume. It is reported as not written back. */
     done = fl->fl_Task != NULL ? DoPkt(fl->fl_Task, ACTION_FLUSH, 0, 0, 0, 0, 0) : DOSFALSE;
-    err = IoErr();
-    found = device_of(lock, device, sizeof device);
-    UnLock(lock);                       /* no lock of ours across an inhibit */
-    if (done)
-        return "flush";
-    if (err != ERROR_ACTION_NOT_KNOWN || !found)
-        return NULL;
-    if (!Inhibit((CONST_STRPTR)device, DOSTRUE))
-        return NULL;
-    return Inhibit((CONST_STRPTR)device, DOSFALSE) ? "inhibit" : NULL;
+    UnLock(lock);
+    return done ? "flush" : NULL;
 }
 #else
 /* A lock file's path and descriptor. It is removed while still held, so a
