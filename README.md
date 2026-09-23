@@ -16,8 +16,10 @@ channel**, [Channels](docs/channels.md); to **ship builds for several
 CPUs**, [Distributing builds](docs/distributing.md); to **move an existing
 distribution, archive or package manager to pkg**,
 [Moving to pkg](docs/migrating.md); to **take pkg itself off a system**,
-[Removing pkg](docs/removing.md); and if **an AI assistant does the
-typing for you**, [pkg with an AI assistant](docs/agents.md).
+[Removing pkg](docs/removing.md); to **build on one computer and test on an
+AROS machine, round after round**, [pkg in a development loop](docs/dev-loop.md);
+and if **an AI assistant does the typing for you**,
+[pkg with an AI assistant](docs/agents.md).
 
 ## Install pkg
 
@@ -212,6 +214,9 @@ Using pkg
   hand.
 - [Removing pkg](docs/removing.md): taking pkg itself off a system, what it
   leaves behind, and moving to a pkg that cannot read this one's database.
+- [pkg in a development loop](docs/dev-loop.md): building on a computer and
+  testing on an AROS machine, with every round checked at both ends; knowing
+  what the machine runs after a crash, and letting a script drive it.
 - [pkg with an AI assistant](docs/agents.md): the skill an agent loads, what
   to ask it, what it will not decide for you.
 - [What pkg says, and how it looks](docs/output.md): the role of every line,

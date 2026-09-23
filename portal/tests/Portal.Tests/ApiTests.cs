@@ -134,7 +134,7 @@ public class ApiTests : IClassFixture<ApiTests.Factory>
     {
         var c = f.CreateClient();
         var hub = await c.GetStringAsync("/developer");
-        foreach (var link in new[] { "/docs/self-update", "/docs/reference#the-library", "/developer/samples", "/developer/api" })
+        foreach (var link in new[] { "/docs/dev-loop", "/docs/self-update", "/docs/reference#the-library", "/developer/samples", "/developer/api" })
         {
             Assert.Contains("href=\"" + link + "\"", hub);
             Assert.Equal(HttpStatusCode.OK, (await c.GetAsync(link)).StatusCode);
