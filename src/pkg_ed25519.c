@@ -349,6 +349,38 @@ static int unpackneg(gf r[4], const u8 p[32])
     return 0;
 }
 
+/* Canonical encoding and prime-order subgroup membership. unpackneg accepts
+ * y values reduced modulo p, and a small-order public key can otherwise
+ * verify a signature without anyone knowing a signing secret. */
+static int valid_point(gf out[4], const u8 encoded[32], int public_key)
+{
+    static const u8 prime[32] = {
+        0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f };
+    static const u8 identity[32] = {1};
+    u8 order[32], packed[32];
+    gf q[4], product[4];
+    int i;
+
+    for (i = 31; i >= 0; i--) {
+        u8 y = i == 31 ? (u8)(encoded[i] & 0x7f) : encoded[i];
+        if (y < prime[i]) break;
+        if (y > prime[i]) return -1;
+    }
+    if (i < 0 || unpackneg(out, encoded)) return -1;
+    /* Zero x has only the even encoding. */
+    if ((encoded[31] & 0x80) && !neq25519(out[0], gf0)) return -1;
+    pack(packed, out);
+    if (public_key && !vn32(packed, identity)) return -1;
+    for (i = 0; i < 32; i++) order[i] = (u8)L[i];
+    for (i = 0; i < 4; i++) set25519(q[i], out[i]);
+    scalarmult(product, q, order);
+    pack(packed, product);
+    return vn32(packed, identity) ? -1 : 0;
+}
+
 /* S must be canonical: strictly below L. */
 static int s_below_L(const u8 *s)
 {
@@ -368,7 +400,8 @@ int pkg_ed25519_verify(const unsigned char sig[64], const unsigned char *msg,
     struct pkg_sha512 c;
 
     if (!s_below_L(sig + 32)) return -1;
-    if (unpackneg(q, pk)) return -1;
+    if (valid_point(q, pk, 1)) return -1;
+    if (valid_point(p, sig, 0)) return -1;
 
     pkg_sha512_init(&c);
     pkg_sha512_update(&c, sig, 32);

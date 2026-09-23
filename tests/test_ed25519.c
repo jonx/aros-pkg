@@ -102,6 +102,18 @@ static void forgeries_are_refused(void)
     pkg_ed25519_keypair(pk2, sk2, seed);
     ok(pkg_ed25519_verify(sig, msg, n, pk2) != 0, "another key");
 
+    /* With the identity public key, R=identity and S=0 used to verify any
+     * message. Noncanonical encodings of that same point must fail too. */
+    {
+        unsigned char identity[32] = {1}, noncanonical[32], forged[64] = {1};
+        ok(pkg_ed25519_verify(forged, msg, n, identity) != 0,
+           "identity-key forgery refused");
+        memset(noncanonical, 0xff, sizeof noncanonical);
+        noncanonical[0] = 0xee; noncanonical[31] = 0x7f;
+        ok(pkg_ed25519_verify(forged, msg, n, noncanonical) != 0,
+           "noncanonical identity refused");
+    }
+
     /* S + L is the same scalar modulo L; RFC 8032 requires refusing it. */
     {
         static const unsigned char Lb[32] = {
