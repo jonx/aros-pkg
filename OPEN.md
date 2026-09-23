@@ -69,6 +69,14 @@ step in `tools/build-aros-regina.sh`, decode a dead-end alert in
   on one root.
 - **An upgrade that is refused at dependency level only names `UPGRADE`**; it
   does not offer to upgrade the dependency in the same run.
+- **Commands for the download cache.** Only `PKG_CACHE` and the paths in the
+  docs manage it today. Wanted: a verb (or `STATUS`) that prints where the cache
+  is on this machine and how big it is, including when AROS fell back to
+  `RAM:pkg-cache`; a `NOCACHE` switch that neither reads nor keeps downloads
+  for one run; and a way to clean the cache, all of it or only what no
+  installed package still needs (old versions, archives from past nightlies).
+  `docs/reference.md` still says `T:pkg-cache` on AROS, while the code uses
+  `SYS:.pkg/cache`, falling back to `RAM:pkg-cache`.
 - **Network channels, publishing from a GitHub link, Aminet and AmigaOS
   interoperability, WHDLoad, paid packages, licences listing**: designed in
   the planning repository, none built.
