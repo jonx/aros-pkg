@@ -38,6 +38,14 @@ public sealed class PushService(IOptions<PortalOptions> options, PkgRunner pkg, 
     public async Task<Record> Plan(Publisher who, string channel, string body)
     {
         RemoveExpiredStaging();
+        var keyGate = KeyLocks.GetOrAdd(who.Name, _ => new SemaphoreSlim(1, 1));
+        await keyGate.WaitAsync();
+        try { return await PlanLocked(who, channel, body); }
+        finally { keyGate.Release(); }
+    }
+
+    async Task<Record> PlanLocked(Publisher who, string channel, string body)
+    {
         var staging = Staging(who, channel);
         Directory.CreateDirectory(staging);
         var plan = ReadPlan(staging);
@@ -108,6 +116,17 @@ public sealed class PushService(IOptions<PortalOptions> options, PkgRunner pkg, 
                                                            string? contentRange, long? contentLength, Stream body,
                                                            CancellationToken ct)
     {
+        // Planning, uploading and committing share the publisher's staging and quota.
+        var keyGate = KeyLocks.GetOrAdd(who.Name, _ => new SemaphoreSlim(1, 1));
+        await keyGate.WaitAsync(ct);
+        try { return await PutFileLocked(who, channel, path, contentRange, contentLength, body, ct); }
+        finally { keyGate.Release(); }
+    }
+
+    async Task<(Record Answer, int Status)> PutFileLocked(Publisher who, string channel, string path,
+                                                        string? contentRange, long? contentLength, Stream body,
+                                                        CancellationToken ct)
+    {
         if (Refusal(path) is { } why) return (Record.Refused(20, $"{path}: {why}", "check the path"), 400);
         if (ChannelFilesRefusal(who, channel, path) is { } notTheirs)
             return (Record.Refused(14, $"{path}: {notTheirs}", "ask the portal's maintainers"), 403);
@@ -142,12 +161,6 @@ public sealed class PushService(IOptions<PortalOptions> options, PkgRunner pkg, 
 
         var final = Path.Combine(staging, path);
         var part = final + ".part";
-        // One upload at a time per key, and the quota counts all its channels,
-        // so parallel requests cannot go past it.
-        var keyGate = KeyLocks.GetOrAdd(who.Name, _ => new SemaphoreSlim(1, 1));
-        await keyGate.WaitAsync(ct);
-        try
-        {
         var cap = who.Files ? o.MaxStagingBytes : o.MaxLinkOnlyStagingBytes;
         var keyRoot = Path.Combine(o.StagingDir, who.Name);
         var held = Directory.Exists(keyRoot)
@@ -194,8 +207,6 @@ public sealed class PushService(IOptions<PortalOptions> options, PkgRunner pkg, 
         File.Move(part, final, overwrite: true);
         return (new Record().Add("result", "received").Add("path", path).Add("received", received)
             .Add("summary", $"{path} received and checked, {Record.Size(want.Size)}"), 200);
-        }
-        finally { keyGate.Release(); }
     }
 
     // ---- commit -------------------------------------------------------------
@@ -204,9 +215,15 @@ public sealed class PushService(IOptions<PortalOptions> options, PkgRunner pkg, 
     {
         var clock = Stopwatch.StartNew();
         var gate = Locks.GetOrAdd(channel, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(ct);
-        try { return await CommitLocked(who, channel, localIndex, clock, ct); }
-        finally { gate.Release(); }
+        var keyGate = KeyLocks.GetOrAdd(who.Name, _ => new SemaphoreSlim(1, 1));
+        await keyGate.WaitAsync(ct);
+        try
+        {
+            await gate.WaitAsync(ct);
+            try { return await CommitLocked(who, channel, localIndex, clock, ct); }
+            finally { gate.Release(); }
+        }
+        finally { keyGate.Release(); }
     }
 
     async Task<Record> CommitLocked(Publisher who, string channel, string localIndex, Stopwatch clock, CancellationToken ct)
@@ -403,8 +420,8 @@ public sealed class PushService(IOptions<PortalOptions> options, PkgRunner pkg, 
         foreach (var signer in accepted.Select(a => a.Signer).Distinct()) publishers.Learn(signer, who.Name);
 
         var stats = ReadStats(staging);
-        if (refusedItems.Count == 0 && Directory.Exists(staging)) Directory.Delete(staging, true);
-        else ForgetPlanned(staging);
+        // Another push from this publisher may still need staged or planned files.
+        ForgetPlanned(staging, live);
 
         var published = accepted.Count;
         var r = new Record().Add("result", published > 0 || acceptedWithdrawals.Count > 0 || mutable > 0 ? "published"
@@ -596,12 +613,13 @@ public sealed class PushService(IOptions<PortalOptions> options, PkgRunner pkg, 
                 .Where(r => ChannelPaths.Classify(r) == ChannelPaths.Kind.Mutable).ToList()
             : [];
 
-    static void ForgetPlanned(string staging)
+    static void ForgetPlanned(string staging, string live)
     {
-        // Keep what was refused staged for another try; drop what went live.
+        // Drop only files that went live; retain pending uploads, including unstarted ones.
         var plan = ReadPlan(staging);
         foreach (var k in plan.Keys.ToList())
-            if (!File.Exists(Path.Combine(staging, k)) && !File.Exists(Path.Combine(staging, k + ".part"))) plan.Remove(k);
+            if (Published(Path.Combine(live, k)) && !File.Exists(Path.Combine(staging, k))
+                && !File.Exists(Path.Combine(staging, k + ".part"))) plan.Remove(k);
         WritePlan(staging, plan);
     }
 
@@ -667,17 +685,25 @@ public sealed class PushService(IOptions<PortalOptions> options, PkgRunner pkg, 
     {
         if (!Directory.Exists(o.StagingDir)) return;
         foreach (var who in Directory.EnumerateDirectories(o.StagingDir))
-            foreach (var ch in Directory.EnumerateDirectories(who))
+        {
+            var keyGate = KeyLocks.GetOrAdd(Path.GetFileName(who), _ => new SemaphoreSlim(1, 1));
+            if (!keyGate.Wait(0)) continue;
+            try
             {
-                // The last file written, so an upload in progress is never taken away.
-                var when = new DirectoryInfo(ch).EnumerateFiles("*", SearchOption.AllDirectories)
-                    .Select(f => f.LastWriteTimeUtc).DefaultIfEmpty(Directory.GetLastWriteTimeUtc(ch)).Max();
-                if (DateTime.UtcNow - when > o.StagingLifetime)
+                foreach (var ch in Directory.EnumerateDirectories(who))
                 {
-                    try { Directory.Delete(ch, true); log.LogInformation("removed expired staging {Dir}", ch); }
-                    catch (IOException) { }
+                    // The last file written, so an upload in progress is never taken away.
+                    var when = new DirectoryInfo(ch).EnumerateFiles("*", SearchOption.AllDirectories)
+                        .Select(f => f.LastWriteTimeUtc).DefaultIfEmpty(Directory.GetLastWriteTimeUtc(ch)).Max();
+                    if (DateTime.UtcNow - when > o.StagingLifetime)
+                    {
+                        try { Directory.Delete(ch, true); log.LogInformation("removed expired staging {Dir}", ch); }
+                        catch (IOException) { }
+                    }
                 }
             }
+            finally { keyGate.Release(); }
+        }
     }
 
     static bool TryRange(string header, out long start, out long end, out long total)

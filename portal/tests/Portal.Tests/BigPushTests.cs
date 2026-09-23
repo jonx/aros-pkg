@@ -131,6 +131,84 @@ public class BigPushTests
         finally { Directory.Delete(work, true); }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_commit_preserves_another_push_from_the_same_publisher(bool stillUploading)
+    {
+        Skip.If(Pkg.Length == 0, "build/pkg is not built");
+        using var f = new Site();
+        using var c = f.Https();
+        var work = Directory.CreateTempSubdirectory("portal-overlap-").FullName;
+        try
+        {
+            var key = Path.Combine(work, "key");
+            Assert.Equal(0, await Run(Pkg, ["KEYGEN", "FILE", key]));
+            var channels = new List<string>();
+            foreach (var arch in new[] { "i386", "x86_64" })
+            {
+                var source = Path.Combine(work, arch, "source");
+                Directory.CreateDirectory(source);
+                await File.WriteAllTextAsync(Path.Combine(source, "data"), arch);
+                var channel = Path.Combine(work, arch, "channel");
+                Assert.Equal(0, await Run(Pkg, ["PUBLISH", source, "CHANNEL", channel,
+                    "NAME", "overlap", "VERSION", "1.0", "ARCH", arch, "KIND", "data", "SIGN", key]));
+                channels.Add(channel);
+            }
+
+            var deferred = new List<(string Rel, byte[] Bytes, int Offset)>();
+            for (int i = 0; i < channels.Count; i++)
+            {
+                var files = Directory.EnumerateFiles(channels[i], "*", SearchOption.AllDirectories)
+                    .Where(p => Path.GetFileName(p) != "index")
+                    .Select(p => (Rel: Path.GetRelativePath(channels[i], p).Replace('\\', '/'), Path: p)).ToList();
+                var plan = string.Concat(files.Select(p => $"{p.Rel} {Digest(p.Path)} {new FileInfo(p.Path).Length}\n"));
+                var (status, answer) = await Send(c, f.Key, HttpMethod.Post, "/overlap/_push/plan", new StringContent(plan));
+                Assert.Equal(HttpStatusCode.OK, status);
+                Assert.DoesNotContain("refused:", answer);
+                foreach (var (rel, path) in files)
+                {
+                    var bytes = await File.ReadAllBytesAsync(path);
+                    if (i == 1 && stillUploading && rel.EndsWith(".sig", StringComparison.Ordinal))
+                    {
+                        deferred.Add((rel, bytes, 0)); // Planned, but not uploaded yet.
+                        continue;
+                    }
+                    int length = i == 1 && stillUploading && rel.EndsWith(".pkg", StringComparison.Ordinal)
+                        ? bytes.Length / 2 : bytes.Length;
+                    var (putStatus, put) = await Send(c, f.Key, HttpMethod.Put, $"/overlap/_push/files/{rel}",
+                        new ByteArrayContent(bytes, 0, length), length == bytes.Length ? null : $"bytes 0-{length - 1}/{bytes.Length}");
+                    Assert.Equal(HttpStatusCode.OK, putStatus);
+                    Assert.Contains(length == bytes.Length ? "result: received" : "result: partial", put);
+                    if (length != bytes.Length) deferred.Add((rel, bytes, length));
+                }
+            }
+
+            async Task Commit(int i, string arch)
+            {
+                var index = await File.ReadAllTextAsync(Path.Combine(channels[i], "index"));
+                var (status, answer) = await Send(c, f.Key, HttpMethod.Post, "/overlap/_push/commit", new StringContent(index));
+                Assert.Equal(HttpStatusCode.OK, status);
+                Assert.Contains($"published: overlap 1.0 {arch}", answer);
+                Assert.DoesNotContain("refused:", answer);
+            }
+            await Commit(0, "i386");
+            foreach (var (rel, bytes, offset) in deferred)
+            {
+                var (status, answer) = await Send(c, f.Key, HttpMethod.Put, $"/overlap/_push/files/{rel}",
+                    new ByteArrayContent(bytes, offset, bytes.Length - offset),
+                    offset == 0 ? null : $"bytes {offset}-{bytes.Length - 1}/{bytes.Length}");
+                Assert.Equal(HttpStatusCode.OK, status);
+                Assert.Contains("result: received", answer);
+            }
+            await Commit(1, "x86_64");
+            var live = await File.ReadAllTextAsync(Path.Combine(f.Data, "channels", "overlap", "index"));
+            Assert.Contains("overlap 1.0 i386", live);
+            Assert.Contains("overlap 1.0 x86_64", live);
+        }
+        finally { Directory.Delete(work, true); }
+    }
+
     [Fact]
     public async Task A_machine_facing_address_never_answers_an_empty_body()
     {
