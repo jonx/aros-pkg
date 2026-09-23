@@ -71,6 +71,14 @@ $PKG PUBLISH d1 CHANNEL srv/ch KIND application DEPENDS helper > /dev/null
 echo "read"
 $PKG SHOW CHANNEL "$U/ch" MACHINE > o1 2>&1
 [ $? -eq 0 ] && has o1 '^entry: hello 1.0 ' && has o1 '^bad: 0$';  ok $? "SHOW reads a channel by URL, every entry checked"
+# The old predictable index.part followed symlinks and overwrote unrelated
+# files when a cache directory was shared or otherwise attacker-writable.
+index_cache=$(find "$T/cache" -type f -name index -print -quit)
+printf 'leave me alone' > "$T/victim"
+[ -n "$index_cache" ] && ln -s "$T/victim" "$index_cache.part"
+$PKG SHOW CHANNEL "$U/ch" MACHINE > o-cache-symlink 2>&1
+[ $? -eq 0 ] && has o-cache-symlink '^entry: hello 1.0 ' && [ "$(cat "$T/victim")" = 'leave me alone' ]
+                                                      ok $? "a legacy index.part symlink cannot overwrite another file"
 $PKG INSTALL hello ROOT r CHANNEL "$U/ch" MACHINE > o2 2>&1
 [ $? -eq 0 ] && has o2 '^dependency: helper 1' && [ -f r/C/Hello ] && [ -f r/Libs/helper.library ]
                                                       ok $? "INSTALL over HTTP, with its dependency"

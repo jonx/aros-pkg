@@ -1018,13 +1018,24 @@ extern char **environ;
 char *pkg_cache_dir(void)
 {
     const char *e = getenv("PKG_CACHE"), *x = getenv("XDG_CACHE_HOME"), *h = getenv("HOME");
-    size_t n = 32 + (e ? strlen(e) : 0) + (x ? strlen(x) : 0) + (h ? strlen(h) : 0);
+    size_t n = 64 + (e ? strlen(e) : 0) + (x ? strlen(x) : 0) + (h ? strlen(h) : 0);
     char *p = (char *)malloc(n);
     if (p == NULL) return NULL;
     if (e && *e) snprintf(p, n, "%s", e);
     else if (x && *x) snprintf(p, n, "%s/pkg", x);
     else if (h && *h) snprintf(p, n, "%s/.cache/pkg", h);
-    else snprintf(p, n, "/tmp/pkg-cache");
+    else {
+        struct stat st;
+        uid_t uid = geteuid();
+        /* Keep the old across-process cache behavior without sharing a
+         * writable directory with another user. Never follow a planted link. */
+        snprintf(p, n, "/tmp/pkg-cache-%lu", (unsigned long)uid);
+        if ((mkdir(p, 0700) != 0 && errno != EEXIST) || lstat(p, &st) != 0
+            || !S_ISDIR(st.st_mode) || st.st_uid != uid || (st.st_mode & 077) != 0) {
+            free(p);
+            return NULL;
+        }
+    }
     return p;
 }
 
@@ -1810,11 +1821,17 @@ static int http_get_once(const char *url, int tls, int fd, char *location, size_
 int pkg_net_get(const char *url, const char *dest, char *err, size_t errlen)
 {
     size_t dl = strlen(dest);
-    char *tmp = (char *)malloc(dl + 8), cur[2100], loc[2100];
+    char *tmp = (char *)malloc(dl + 16), cur[2100], loc[2100];
     int hops, tries, rc = -1, fd, tls;
 
     if (tmp == NULL) { snprintf(err, errlen, "out of memory"); return -1; }
-    snprintf(tmp, dl + 8, "%s.part", dest);
+    fd = open_tmp_beside(dest, tmp, dl + 16, 0600);
+    if (fd < 0) {
+        snprintf(err, errlen, "cannot create temporary download beside %s: %s", dest, strerror(errno));
+        free(tmp);
+        return -1;
+    }
+    close(fd);
     snprintf(cur, sizeof cur, "%s", url);
     for (hops = 0; hops < 6; hops++) {
         tls = strncmp(cur, "https://", 8) == 0;
@@ -1834,7 +1851,11 @@ int pkg_net_get(const char *url, const char *dest, char *err, size_t errlen)
          * GET asks for a file and changes nothing, so sending it again is
          * the same request. */
         for (tries = 0; tries < 2; tries++) {
-            fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+#ifdef O_NOFOLLOW
+            fd = open(tmp, O_WRONLY | O_TRUNC | O_NOFOLLOW);
+#else
+            fd = open(tmp, O_WRONLY | O_TRUNC);
+#endif
             if (fd < 0) { snprintf(err, errlen, "cannot write %s: %s", tmp, strerror(errno)); rc = -1; break; }
             loc[0] = '\0';
             rc = http_get_once(cur, tls, fd, loc, sizeof loc, tries == 0, err, errlen);
