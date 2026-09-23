@@ -727,6 +727,32 @@ void pkg_fs_unlock_dir(void *lock)
     (void)lock;
 }
 
+/* <root>/.pkg/lock opened with no sharing: a second opener is refused. */
+void *pkg_fs_lock_root(const char *root, int *busy)
+{
+    char *dir = pkg_join(root, ".pkg"), *path = dir ? pkg_join(dir, "lock") : NULL;
+    wchar_t *w;
+    HANDLE h;
+    *busy = 0;
+    if (path == NULL || pkg_fs_mkdirs(dir) != 0 || (w = wide(path)) == NULL) {
+        free(dir); free(path);
+        return NULL;
+    }
+    h = CreateFileW(w, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    free(w); free(dir); free(path);
+    if (h == INVALID_HANDLE_VALUE) {
+        *busy = GetLastError() == ERROR_SHARING_VIOLATION;
+        return NULL;
+    }
+    return (void *)h;
+}
+
+void pkg_fs_unlock_root(void *lock)
+{
+    if (lock != NULL)
+        CloseHandle((HANDLE)lock);
+}
+
 /* ---- the network ------------------------------------------------------ */
 
 #include <process.h>

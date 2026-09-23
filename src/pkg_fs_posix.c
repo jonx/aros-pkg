@@ -921,6 +921,103 @@ void pkg_fs_unlock_dir(void *lock)
 #endif
 }
 
+#if defined(__AROS__)
+#include <exec/semaphores.h>
+#include <exec/memory.h>
+
+void *pkg_fs_lock_root(const char *root, int *busy)
+{
+    char full[512], name[540];
+    struct SignalSemaphore *sem;
+    *busy = 0;
+    if (!pkg_fs_fullpath(root, full, sizeof full))
+        return NULL;
+    snprintf(name, sizeof name, "pkg %s", full);
+    Forbid();
+    sem = FindSemaphore((CONST_STRPTR)name);
+    if (sem == NULL) {
+        /* Registered once and left: another run of pkg finds it by name. */
+        size_t n = strlen(name) + 1;
+        sem = (struct SignalSemaphore *)AllocMem(sizeof *sem + n, MEMF_PUBLIC | MEMF_CLEAR);
+        if (sem != NULL) {
+            char *copy = (char *)(sem + 1);
+            memcpy(copy, name, n);
+            sem->ss_Link.ln_Name = copy;
+            sem->ss_Link.ln_Pri = 0;
+            AddSemaphore(sem);
+        }
+    }
+    if (sem != NULL && !AttemptSemaphore(sem)) {
+        *busy = 1;
+        sem = NULL;
+    }
+    Permit();
+    return sem;
+}
+
+void pkg_fs_unlock_root(void *lock)
+{
+    if (lock != NULL)
+        ReleaseSemaphore((struct SignalSemaphore *)lock);
+}
+#else
+/* A lock file's path and descriptor. It is removed while still held, so a
+ * root keeps nothing of it; a locker that finds its file removed under it
+ * takes the new one instead. */
+struct root_lock { int fd; char *path; };
+
+void *pkg_fs_lock_root(const char *root, int *busy)
+{
+    char *dir = pkg_join(root, ".pkg"), *path = dir ? pkg_join(dir, "lock") : NULL;
+    struct root_lock *h;
+    int fd, tries;
+    *busy = 0;
+    if (path == NULL || pkg_fs_mkdirs(dir) != 0) { free(dir); free(path); return NULL; }
+    free(dir);
+    for (tries = 0; tries < 8; tries++) {
+        struct stat held, now;
+        fd = open(path, O_RDWR | O_CREAT, 0644);
+        if (fd < 0)
+            break;
+        if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+            *busy = errno == EWOULDBLOCK;
+            close(fd);
+            break;
+        }
+        if (fstat(fd, &held) == 0 && stat(path, &now) == 0 && held.st_ino == now.st_ino
+            && held.st_dev == now.st_dev) {
+            h = (struct root_lock *)malloc(sizeof *h);
+            if (h == NULL) { close(fd); break; }
+            h->fd = fd;
+            h->path = path;
+            return h;
+        }
+        close(fd);                      /* the holder before removed it: again */
+    }
+    free(path);
+    return NULL;
+}
+
+void pkg_fs_unlock_root(void *lock)
+{
+    struct root_lock *h = (struct root_lock *)lock;
+    if (h != NULL) {
+        char *dir = strdup(h->path), *slash = dir ? strrchr(dir, '/') : NULL;
+        unlink(h->path);
+        flock(h->fd, LOCK_UN);
+        close(h->fd);
+        /* .pkg made for the lock alone goes too. */
+        if (slash != NULL) {
+            *slash = '\0';
+            rmdir(dir);
+        }
+        free(dir);
+        free(h->path);
+        free(h);
+    }
+}
+#endif
+
 /* ---- the network ------------------------------------------------------ */
 
 static int net_connect(int s, const void *address, unsigned int length);

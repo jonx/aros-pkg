@@ -114,7 +114,25 @@ int call(const struct pkg_sink *s, const char *verb, op_fn fn, const struct pkg_
                     }
                 }
         }
-        if (!rc) rc = fn(o != NULL ? o : &none);
+        if (!rc) {
+            /* One change of a root at a time: a second pkg changing the same
+             * root would share its staging and interleave its records. A dry
+             * run writes nothing and takes no lock. */
+            void *lock = NULL;
+            if (o != NULL && o->root != NULL && !o->dryrun && pkg_fs_is_dir(o->root)
+                && (!strcmp(verb, "install") || !strcmp(verb, "upgrade") || !strcmp(verb, "rollback")
+                    || !strcmp(verb, "repair") || !strcmp(verb, "remove"))) {
+                int busy;
+                lock = pkg_fs_lock_root(o->root, &busy);
+                if (lock == NULL)
+                    rc = busy ? refuse_n(15, "retry-later", "another pkg is changing %s now; nothing "
+                                         "was changed. Give the command again once it is done", o->root)
+                              : refuse_c(17, "the root %s cannot be locked for this change: %s",
+                                         o->root, strerror(errno));
+            }
+            if (!rc) rc = fn(o != NULL ? o : &none);
+            pkg_fs_unlock_root(lock);
+        }
     }
     placements_clear();
     rc = rc == 0 ? PKGRC_OK : refused_class ? refused_class : PKGRC_REFUSED;

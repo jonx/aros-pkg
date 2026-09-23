@@ -540,6 +540,11 @@ const char *next_cli_words(const char *next)
         return "to move to that version, UPGRADE instead of INSTALL";
     if (strcmp(next, "use-install") == 0)
         return "it is not installed there; INSTALL it instead";
+    if (strcmp(next, "retry-later") == 0)
+        return "give the same command again once the other change is done";
+    if (strcmp(next, "install-dependency-first") == 0)
+        return "INSTALL that dependency first, with KEY naming its own publisher's key, "
+               "then this package";
     return "report this to whoever requested it";
 }
 
@@ -562,6 +567,11 @@ const char *pkg_next_words(const char *next)
         return "Another version is installed; upgrade it to this one instead.";
     if (strcmp(next, "use-install") == 0)
         return "It is not installed yet; install it instead.";
+    if (strcmp(next, "retry-later") == 0)
+        return "Another change of this system is under way; try again when it is done.";
+    if (strcmp(next, "install-dependency-first") == 0)
+        return "It needs another package whose publisher is not known yet; install that one "
+               "first, from its own publisher.";
     return "Nothing more can be done from here.";
 }
 

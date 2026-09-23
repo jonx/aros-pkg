@@ -240,6 +240,17 @@ Edited configuration files stay as they are. Like UPGRADE
 ALL, REPAIR ALL goes as far as it can and names what it could not repair.
 `tests/e2e.sh`, section `repair`.
 
+### One change of a root at a time
+
+INSTALL, UPGRADE, ROLLBACK, REPAIR and REMOVE take the root's lock before
+they change it, without waiting: while another pkg holds it, the command is
+refused at once (15, `next: retry-later`) and changes nothing. Two runs
+would otherwise share `.pkg/staging/<name>` and interleave their records. A
+dry run writes nothing and takes no lock. On AROS the lock is a public
+semaphore named after the root's full path, so a reset leaves none behind;
+elsewhere it is `.pkg/lock`, released when the process ends and removed
+while still held, so a root keeps nothing of it. `tests/lock.sh`.
+
 ### An interrupted change
 
 A change cut at any point, by a crash, a reset or a killed process, is

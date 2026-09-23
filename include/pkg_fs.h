@@ -140,6 +140,12 @@ int pkg_fs_replace_if_same(const char *path, const struct pkg_fs_id *before,
  * otherwise, and the identity check alone guards the write. */
 void *pkg_fs_lock_dir(const char *dir);
 void  pkg_fs_unlock_dir(void *lock);
+/* The one change a root takes at a time, without waiting: a handle, or
+ * NULL with *busy 1 when another process holds it (0: it could not be
+ * made). On AROS a public semaphore named after the root's full path, gone
+ * at a reset; elsewhere <root>/.pkg/lock, released when the process ends. */
+void *pkg_fs_lock_root(const char *root, int *busy);
+void  pkg_fs_unlock_root(void *lock);
 
 /* ---- the network ------------------------------------------------------ */
 

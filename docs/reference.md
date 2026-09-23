@@ -243,7 +243,9 @@ Every answer has a `result:` line: `installed`, `upgraded`, `downgraded`,
 `signed`, `empty` or `refused`; `would-...` under `DRYRUN`. A refusal adds
 `class:`, `code:`, `reason:` and `next:`, what to do: `ask-requester`
 (a decision for the person), `check-name`, `fix-command`, `use-install`,
-`use-upgrade`, `stop` or `report`. Beside them:
+`use-upgrade`, `retry-later` (another pkg is changing the root),
+`install-dependency-first` (a dependency's publisher is not known yet,
+under `KEY`), `stop` or `report`. Beside them:
 
 | Key | Meaning |
 |---|---|
