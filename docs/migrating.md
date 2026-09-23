@@ -67,7 +67,9 @@ what `CONFIG` and defaults are for. Today you write the package by hand:
 a drawer laid out as the script would have left the system, plus `CONFIG`
 for what the script asked about. A converter that reads `Installer` scripts
 at build time is planned and not built; until then the script stays with
-your archive for people who install by hand.
+your archive for people who install by hand. For scripts that do more than
+copy files, pkg is to run the script itself through Installer and record what
+it changes: [Installer and pkg](installer-api.md), a proposal.
 
 ## From another package manager
 

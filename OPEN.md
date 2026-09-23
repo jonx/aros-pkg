@@ -17,7 +17,7 @@ Details in [docs/aros-defects.md](docs/aros-defects.md).
 | posixc `stdout` reaches no shell redirection | first AROS runs | Fix in posixc, or document that CLI tools must write through `Output()` |
 | posixc reports no `EEXIST` or `ENOENT` where POSIX does | first AROS runs | Fix the errno mapping in posixc |
 | A command that cannot load leaves `$RC` unchanged | goal 2, four-case check | Compare with AmigaOS 3.x first; if AmigaOS sets a failure code, set it in the AROS shell too |
-| The AROS Installer cannot install most scripts, nor run unattended, nor report what it wrote or whether it failed | 2026-09-18, the Installer modes | Implement the missing commands, a real unattended mode, exit codes and icon start; details in [docs/aros-defects.md](docs/aros-defects.md) |
+| The AROS Installer cannot install most scripts, nor run unattended, nor report what it wrote or whether it failed | 2026-09-18, the Installer modes | aros-development-team/AROS#1293 and #1297 (open, another author) implement the missing commands, the V44 language, `MANIFEST/K` and `PRETEND/S`; a driven session, a manifest that can be undone and distinct return codes remain, proposed in [docs/installer-api.md](docs/installer-api.md) |
 | collect-aros writes ELF ABI version 1 whatever the ABI, and the loader never checks it | 2026-09-18, the ABI field | Write the real ABI version per target in collect-aros, and have the loader refuse a mismatch; Pkg will not rely on it either way |
 | The darwin hosted build ships no FFS handler | goal 2 | Add `kernel-fs-afs` to the hosted build, or say why it is left out |
 
@@ -69,6 +69,10 @@ step in `tools/build-aros-regina.sh`, decode a dead-end alert in
   on one root.
 - **An upgrade that is refused at dependency level only names `UPGRADE`**; it
   does not offer to upgrade the dependency in the same run.
+- **Installer scripts as a package kind.** pkg runs a package's own
+  `Installer` script through a driven session and undoes it from Installer's
+  manifest. The contract with Installer is proposed in
+  [docs/installer-api.md](docs/installer-api.md); both sides are unbuilt.
 - **Commands for the download cache.** Only `PKG_CACHE` and the paths in the
   docs manage it today. Wanted: a verb (or `STATUS`) that prints where the cache
   is on this machine and how big it is, including when AROS fell back to
