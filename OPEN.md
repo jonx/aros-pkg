@@ -73,6 +73,13 @@ step in `tools/build-aros-regina.sh`, decode a dead-end alert in
   `Installer` script through a driven session and undoes it from Installer's
   manifest. The contract with Installer is proposed in
   [docs/installer-api.md](docs/installer-api.md); both sides are unbuilt.
+- **Loose ends from 1.8.1.** On AROS the root lock is an Exec semaphore: a pkg
+  that crashes or aborts (`abort()` in `pkg_archive.c`) keeps it, and every
+  change is refused with 15 until a reset. On Windows `.pkg/lock` stays in the
+  root, and the Windows lock is not built or tested here. Protection bits are
+  set after the database write, so a cut in between leaves them unset and a
+  repeat reports `unchanged`. `flushed: no` is printed on every change to a
+  FAT volume whose handler lacks ACTION_FLUSH.
 - **Commands for the download cache.** Only `PKG_CACHE` and the paths in the
   docs manage it today. Wanted: a verb (or `STATUS`) that prints where the cache
   is on this machine and how big it is, including when AROS fell back to

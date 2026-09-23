@@ -8,7 +8,7 @@ CPPFLAGS  = -Iinclude -Ithird_party/bzip2 $(VERFLAGS)
 # The version this binary says it is: the release in include/pkg.h, a patch
 # number raised by hand when a release changes, and the day it was built.
 # PATCH=n BUILD=20260920 on the command line pins them for a reproducible build.
-PATCH    ?= 0
+PATCH    ?= 1
 BUILD    ?= $(shell date -u +%Y%m%d)
 BUILDDAY ?= $(shell date -u +%d.%m.%Y)
 VERFLAGS  = -DPKG_VERSION_PATCH='"$(PATCH)"' -DPKG_BUILD='"$(BUILD)"' -DPKG_BUILD_DAY='"$(BUILDDAY)"' 
