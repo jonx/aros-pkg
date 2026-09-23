@@ -235,9 +235,41 @@ version from the channel, checks its signature, and puts back each missing
 or changed file, after checking its bytes against the digest the root
 recorded at install. A changed file is kept beside as `<file>.pkgold`, never
 overwritten; when a `.pkgold` is already there, the file is left as it is,
-with a warning. Edited configuration files stay as they are. Like UPGRADE
+with a warning, and REPAIR refuses with 12: the package is not repaired.
+Edited configuration files stay as they are. Like UPGRADE
 ALL, REPAIR ALL goes as far as it can and names what it could not repair.
 `tests/e2e.sh`, section `repair`.
+
+### An interrupted change
+
+A change cut at any point, by a crash, a reset or a killed process, is
+finished by giving the same command again. Nothing else is needed, and
+nothing is set aside:
+
+- A file that already holds the new version's own bytes counts as placed
+  (`resumed-files:`), so the repeated command goes on from where the cut
+  one stopped instead of refusing the files as edited.
+- The database entry is written last: until it is, the root holds the old
+  version, and the command is not done. The previous-version record and
+  the key pin are written before it, so a cut can leave them ahead of the
+  database, never behind it.
+- The previous-version record also names the change under way,
+  `to <version> <verb>`. ROLLBACK refuses while that change is unfinished,
+  since there is nothing to go back from yet, and finishes an interrupted
+  ROLLBACK. ROLLBACK itself goes back and forth, so after a cut it is given
+  again only when the version it was asked for is not the one installed.
+- On AROS, `rename()` over a file is `DeleteFile` then `Rename`, which a cut
+  in between leaves with no file at all. So pkg first renames the old
+  record aside as `.<name>.pkgbak`, then puts the new one in place, and
+  every reader of a record that is missing reads its backup.
+
+`tests/interrupt.sh` ends pkg before each rename and unlink of INSTALL,
+UPGRADE, a second UPGRADE, ROLLBACK and REPAIR, once and twice at the same
+point, in a build cut as a process ends and one built and cut as AROS
+renames, and checks the version, the pin, the previous version and that
+ROLLBACK right after the cut goes where the database says or nowhere. A
+process that ends is not power loss: what the handler still held in its
+cache is not in that test.
 
 ### Executables of several CPUs
 

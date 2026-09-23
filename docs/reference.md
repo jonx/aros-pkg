@@ -258,6 +258,7 @@ Every answer has a `result:` line: `installed`, `upgraded`, `downgraded`,
 | `missing:`, `changed:`, `edited:`, `moved:` | `VERIFY`: a file and what is wrong with it |
 | `restored:`, `set-aside:` | `REPAIR`: a file put back; a changed one kept as `.pkgold` |
 | `adopted:`, `unchanged-files:` | files already in place, left as they are |
+| `resumed-files:` | files an interrupted change had already placed, byte for byte |
 | `config-kept:`, `config-new:` | an edited configuration file kept; the new one set beside it |
 | `short:`, `category:`, `tag:`, `author:`, `homepage:`, `repository:`, `license:`, `distribution:`, `description:`, `changes:` | `SHOW <name>`: the catalogue fields of the newest version, one line per value |
 | `candidate:` | `RESOLVE`: one place the loader looks: path, exists, version, package, chosen; with `verdict:` and `next-step:` lines naming the path |

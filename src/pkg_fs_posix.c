@@ -60,9 +60,60 @@ char *pkg_join(const char *a, const char *b)
     return p;
 }
 
+#if defined(__AROS__) || defined(PKG_RENAME_NOT_ATOMIC)
+/* AROS rename() over an existing file is DeleteFile then Rename: cut in
+ * between, the path has no file at all. So an atomic write first renames
+ * the old file aside as .<name>.pkgbak, beside it, and only then puts the
+ * new one in place. A path with no file and a backup beside it is a write
+ * that was cut: every reader sees the backup, the last complete content. */
+#define PKG_BACKUP_RECORDS 1
+static char *backup_of(const char *path)
+{
+    const char *slash = strrchr(path, '/'), *base;
+    size_t dl, lp = strlen(path);
+    char *b;
+#ifdef __AROS__
+    const char *colon = strrchr(path, ':');
+    if (colon != NULL && (slash == NULL || colon > slash))
+        slash = colon;
+#endif
+    base = slash ? slash + 1 : path;
+    dl = (size_t)(base - path);
+    b = (char *)malloc(lp + 9u);
+    if (b != NULL)
+        snprintf(b, lp + 9u, "%.*s.%s.pkgbak", (int)dl, path, base);
+    return b;
+}
+
+/* The backup to read instead of path, or NULL. */
+static char *cut_write(const char *path)
+{
+    struct stat st;
+    char *b;
+    if (lstat(path, &st) == 0 || errno != ENOENT)
+        return NULL;
+    b = backup_of(path);
+    if (b != NULL && lstat(b, &st) == 0)
+        return b;
+    free(b);
+    return NULL;
+}
+#endif
+
 int pkg_fs_read(const char *path, unsigned char **buf, size_t *len)
 {
     FILE *f = fopen(path, "rb");
+#ifdef PKG_BACKUP_RECORDS
+    if (f == NULL && errno == ENOENT) {
+        char *b = cut_write(path);
+        if (b != NULL) {
+            f = fopen(b, "rb");
+            free(b);
+        }
+        if (f == NULL)
+            errno = ENOENT;
+    }
+#endif
     unsigned char *p = NULL;
     size_t cap = 0, n = 0;
 
@@ -452,11 +503,39 @@ static int write_atomic_mode(const char *path, const void *buf, size_t len, int 
         b += w;
         len -= (size_t)w;
     }
-    if (fsync(fd) != 0 || close(fd) != 0 || rename(tmp, path) != 0) {
+    if (fsync(fd) != 0 || close(fd) != 0) {
         unlink(tmp);
         free(tmp);
         return -1;
     }
+#ifdef PKG_BACKUP_RECORDS
+    {
+        char *b = backup_of(path);
+        struct stat st;
+        if (b == NULL) { unlink(tmp); free(tmp); return -1; }
+        if (lstat(path, &st) == 0) {
+            /* A backup older than path is stale: path is complete. */
+            unlink(b);
+            if (rename(path, b) != 0) { unlink(tmp); free(tmp); free(b); return -1; }
+        }
+        /* From here until the rename, readers see the backup. */
+        if (rename(tmp, path) != 0) {
+            rename(b, path);
+            unlink(tmp);
+            free(tmp);
+            free(b);
+            return -1;
+        }
+        unlink(b);
+        free(b);
+    }
+#else
+    if (rename(tmp, path) != 0) {
+        unlink(tmp);
+        free(tmp);
+        return -1;
+    }
+#endif
     free(tmp);
     return 0;
 }
@@ -464,7 +543,16 @@ static int write_atomic_mode(const char *path, const void *buf, size_t len, int 
 int pkg_fs_exists(const char *path)
 {
     struct stat st;
+#ifdef PKG_BACKUP_RECORDS
+    char *b;
+    if (lstat(path, &st) == 0)
+        return 1;
+    b = cut_write(path);
+    free(b);
+    return b != NULL;
+#else
     return lstat(path, &st) == 0;
+#endif
 }
 
 /* stat, following links: a directory reached through a symlink is still a
@@ -493,7 +581,17 @@ int pkg_fs_rename(const char *from, const char *to)
 
 int pkg_fs_unlink(const char *path)
 {
+#ifdef PKG_BACKUP_RECORDS
+    /* A cut write's backup goes with the path, or it would come back. */
+    char *b = backup_of(path);
+    int rc = unlink(path), gone = rc != 0 && errno == ENOENT;
+    if (b != NULL && unlink(b) == 0 && gone)
+        rc = 0;
+    free(b);
+    return rc;
+#else
     return unlink(path);
+#endif
 }
 
 int pkg_fs_rmtree(const char *path)

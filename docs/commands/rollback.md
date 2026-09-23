@@ -16,6 +16,10 @@ upgrade, and records the version it replaced in turn, so a second
 `ROLLBACK` goes forward again: one step, in either direction, not a
 history. The previous version must still be in the channel.
 
+After an interrupted change, ROLLBACK refuses until that change is
+finished, and finishes an interrupted ROLLBACK itself
+([history](../history.md#an-interrupted-change)).
+
 Without `CHANNEL` it reads the channels the root lists ([CHANNEL](channel.md)), in order; `CHANNEL <channel>` means that channel alone.
 
 ## Examples

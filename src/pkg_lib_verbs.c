@@ -1505,7 +1505,8 @@ int cmd_rollback(const struct pkg_options *a)
     free(pp);
     memset(&prev, 0, sizeof prev);
     {
-        char tmp[200];
+        char tmp[200], to[64] = "", how[16] = "";
+        const char *nl;
         size_t n = len < sizeof tmp - 1 ? len : sizeof tmp - 1;
         memcpy(tmp, buf, n);
         tmp[n] = '\0';
@@ -1513,6 +1514,27 @@ int cmd_rollback(const struct pkg_options *a)
         if (sscanf(tmp, "%63s", prev.version) != 1 || pkg_check_version(prev.version) != NULL) {
             pkg_manifest_free(&cur);
             return refuse_c(12, "the rollback record for %s is damaged", a->target);
+        }
+        /* The change that wrote the record: "to <version> <verb>". */
+        nl = strchr(tmp, '\n');
+        if (nl != NULL && sscanf(nl + 1, "to %63s %15s", to, how) == 2 && pkg_check_version(to) != NULL)
+            to[0] = how[0] = '\0';
+        if (pkg_version_cmp(prev.version, cur.version) == 0) {
+            /* A change cut after it wrote this record and before its
+             * database entry: it is not done, so nothing is to go back
+             * from. An interrupted ROLLBACK is finished by this one. */
+            if (strcmp(how, "rollback") == 0 && to[0] && pkg_version_cmp(to, cur.version) != 0) {
+                tr("finishing the interrupted rollback of %s to %s", a->target, to);
+                snprintf(prev.version, sizeof prev.version, "%s", to);
+            } else {
+                pkg_manifest_free(&cur);
+                if (to[0])
+                    return refuse_c(11, "%s: an interrupted %s to %s is not finished; repeat it, "
+                                  "then ROLLBACK", a->target, how, to);
+                return refuse_c(11, "the rollback record for %s names %s, the version installed; an "
+                              "interrupted change left it: repeat that change, then ROLLBACK",
+                              a->target, prev.version);
+            }
         }
     }
     if (open_channels(a, &ix) != 0) { pkg_manifest_free(&cur); return 1; }
@@ -1805,7 +1827,7 @@ struct repair_ctx {
     const char                *root;
     const struct pkg_manifest *m;
     unsigned char             *need;    /* per file of m: 1 missing, 2 changed */
-    unsigned long              restored, aside;
+    unsigned long              restored, aside, left;
     char                       err[400];
 };
 
@@ -1837,6 +1859,7 @@ static int repair_entry(const struct pkg_entry *e, void *ctx)
         if (pkg_fs_exists(old)) {
             /* An earlier change is set aside there already: never lose one. */
             warn("%s already holds an earlier change; %s is left as it is", oldrel, pf->path);
+            c->left++;
             free(old); free(oldrel);
             free(to);
             return 0;
@@ -1913,7 +1936,7 @@ int repair_one(const struct pkg_options *a, const struct index *ix, const char *
     if (fetch(chan_of(e), e, &f) != 0)
         goto out;
     if (!dry_run) {
-        c.root = a->root; c.m = &m; c.restored = c.aside = 0; c.err[0] = '\0';
+        c.root = a->root; c.m = &m; c.restored = c.aside = c.left = 0; c.err[0] = '\0';
         if (pkg_read(f.pkg, f.pkg_len, repair_entry, &c, &stopped) != PKG_OK) {
             refuse_c(c.err[0] && strstr(c.err, "is not the file") ? 12 : 17, "%s %s: %s; %lu file%s "
                      "put back before it", m.name, m.version, c.err[0] ? c.err : "the payload is unreadable",
@@ -1923,6 +1946,14 @@ int repair_one(const struct pkg_options *a, const struct index *ix, const char *
         }
         *restored = c.restored;
         *aside = c.aside;
+        if (c.left) {
+            /* Put back is not intact: say so, not "repaired". */
+            refuse_c(PKGRC_INTEGRITY, "%s %s: %lu damaged file%s left as %s, since a .pkgold beside "
+                     "it already holds an earlier change; move that aside, then REPAIR again",
+                     m.name, m.version, c.left, c.left == 1 ? " is" : "s are", c.left == 1 ? "it is" : "they are");
+            fetched_free(&f);
+            goto out;
+        }
     } else {
         *restored = (unsigned long)needed;
     }

@@ -1803,6 +1803,7 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
     struct installed others;/* loaded when a file is already there */
     int others_loaded = 0;
     unsigned long same;     /* files the old and new versions share, intact on disk */
+    unsigned long resumed;  /* files an interrupted change already placed, byte for byte */
     int fs;
     unsigned char *keep;    /* per file: 1 a person's configuration kept, the new one set
                                beside it; 2 kept, and the new version is what they edited;
@@ -1825,6 +1826,7 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
         return refuse("out of memory");
     adopted = 0;
     same = 0;
+    resumed = 0;
     others.m = NULL;
     others.n = 0;
     doing_things("checking", m->name, (long long)m->nfiles, "file");
@@ -1889,6 +1891,11 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
                 keep[i] = 3;            /* the same in both versions, and intact */
                 same++;
             }
+        } else if (fs == 1 && file_state(root, m->files[i].path, m->files[i].digest, m->files[i].size) == 0) {
+            /* Not an edit: this change, interrupted, already put the new
+             * version's own bytes here. Repeating it goes on from there. */
+            keep[i] = 3;
+            resumed++;
         } else if (fs == 1) {
             free(keep);
             installed_free(&others);
@@ -1903,6 +1910,11 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
         if (machine) kv("adopted", "%lu", adopted);
         else say_item("adopted", "%lu file%s already there, identical to %s %s's", adopted,
                  adopted == 1 ? "" : "s", m->name, m->version);
+    }
+    if (resumed) {
+        if (machine) kv("resumed-files", "%lu", resumed);
+        else say_item("resumed", "%lu file%s already placed by an interrupted change", resumed,
+                 resumed == 1 ? "" : "s");
     }
     if (same) {
         if (machine) kv("unchanged-files", "%lu", same);
@@ -2042,6 +2054,23 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
         }
     }
 
+    /* The database entry is written last: it is what says the change is
+     * done. A cut before it leaves the old entry, and the same operation
+     * repeated finishes the change (the files already placed count as
+     * placed). So the previous version and the pin go first: a cut can
+     * leave them ahead of the database, never behind it. */
+    if (old != NULL) {
+        /* "<old>" then "to <new> <verb>": until the database entry follows,
+         * the record says which change is under way (readers of the first
+         * word alone see the previous version, as before). */
+        char *pp = root_path(root, "prev", m->name), line[200];
+        int n = snprintf(line, sizeof line, "%s\nto %s %s\n", old->version, m->version, verb_name);
+        if (pp == NULL || pkg_fs_write_atomic(pp, line, (size_t)n) != 0)
+            warn("the previous version could not be recorded for ROLLBACK");
+        free(pp);
+    }
+    if (write_pin(root, m->name, f->signer) != 0)
+        warn("the signing key could not be pinned");
     dbp = root_path(root, "db", m->name);
     if (dbp == NULL || pkg_fs_write_atomic(dbp, f->mtext, f->mlen) != 0) {
         refuse_c(17, "the files are placed but the database entry could not be written: %s",
@@ -2052,15 +2081,6 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
     }
     free(dbp);
     apply_attrs(root, m);
-    if (write_pin(root, m->name, f->signer) != 0)
-        warn("the signing key could not be pinned");
-    if (old != NULL) {
-        char *pp = root_path(root, "prev", m->name), line[160];
-        int n = snprintf(line, sizeof line, "%s\n", old->version);
-        if (pp == NULL || pkg_fs_write_atomic(pp, line, (size_t)n) != 0)
-            warn("the previous version could not be recorded for ROLLBACK");
-        free(pp);
-    }
     pkg_fs_rmtree(staging);
     free(staging);
     return 0;
