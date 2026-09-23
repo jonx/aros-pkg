@@ -1566,6 +1566,24 @@ static int ameta_set(const char *root, const char *rel, unsigned long long prot,
     return rc;
 }
 
+/* What attrs_one could not set, said once per package by attrs_report:
+ * a file system without comments, FAT, refuses every one, and a line per
+ * file buries everything else pkg says. */
+static unsigned long attrs_prot_failed, attrs_comment_failed;
+static char attrs_prot_first[160], attrs_comment_first[160];
+
+void attrs_report(const char *name)
+{
+    if (attrs_prot_failed)
+        warn("the protection of %lu file%s of %s could not be set (the first: %s)",
+             attrs_prot_failed, attrs_prot_failed == 1 ? "" : "s", name, attrs_prot_first);
+    if (attrs_comment_failed)
+        warn("the comment of %lu file%s of %s could not be set, as on a file system that keeps "
+             "none (the first: %s)", attrs_comment_failed, attrs_comment_failed == 1 ? "" : "s",
+             name, attrs_comment_first);
+    attrs_prot_failed = attrs_comment_failed = 0;
+}
+
 /* Give each installed file its protection and comment: on AROS the file
  * system holds them; elsewhere the host mode takes owner Execute and the
  * directory's .ameta the rest. */
@@ -1577,8 +1595,12 @@ void attrs_one(const char *root, const struct pkg_file *f)
     latin[0] = '\0';
     if (f->comment) pkg_comment_latin1(f->comment, latin, sizeof latin);
     r = pkg_fs_amiga_set(full, f->prot, latin);
-    if (r < 0) {
-        warn("the protection or comment of %s could not be set", f->path);
+    if (r == -1) {
+        if (attrs_prot_failed++ == 0)
+            snprintf(attrs_prot_first, sizeof attrs_prot_first, "%s", f->path);
+    } else if (r < 0) {
+        if (attrs_comment_failed++ == 0)
+            snprintf(attrs_comment_first, sizeof attrs_comment_first, "%s", f->path);
     } else if (r == 0) {
         if (pkg_fs_set_owner_exec(full, (f->prot & PKG_AMETA_OWNER_EXECUTE) == 0) != 0)
             warn("the host mode of %s could not be set", f->path);
@@ -1592,6 +1614,7 @@ static void apply_attrs(const char *root, const struct pkg_manifest *m)
     size_t i;
     for (i = 0; i < m->nfiles; i++)
         attrs_one(root, &m->files[i]);
+    attrs_report(m->name);
 }
 
 void installed_free(struct installed *in)

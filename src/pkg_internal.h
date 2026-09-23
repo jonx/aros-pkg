@@ -82,6 +82,7 @@
 #define ascii_casecmp pkgi_ascii_casecmp
 #define ascii_casecmp_n pkgi_ascii_casecmp_n
 #define attrs_one pkgi_attrs_one
+#define attrs_report pkgi_attrs_report
 #define beside pkgi_beside
 #define build_package pkgi_build_package
 #define built_free pkgi_built_free
@@ -638,6 +639,7 @@ int file_state(const char *root, const char *path, const char *digest,
                unsigned long long size);
 const struct pkg_file *find_file(const struct pkg_manifest *m, const char *path);
 void attrs_one(const char *root, const struct pkg_file *f);
+void attrs_report(const char *name);
 void installed_free(struct installed *in);
 int load_all(const char *root, struct installed *in);
 int placement_prepare(const char *root, const struct pkg_manifest *m);

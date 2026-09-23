@@ -1957,7 +1957,9 @@ int repair_one(const struct pkg_options *a, const struct index *ix, const char *
     }
     if (!dry_run) {
         c.root = a->root; c.m = &m; c.restored = c.aside = c.left = 0; c.err[0] = '\0';
-        if (pkg_read(f.pkg, f.pkg_len, repair_entry, &c, &stopped) != PKG_OK) {
+        int unread = pkg_read(f.pkg, f.pkg_len, repair_entry, &c, &stopped) != PKG_OK;
+        attrs_report(m.name);
+        if (unread) {
             refuse_c(c.err[0] && strstr(c.err, "is not the file") ? 12 : 17, "%s %s: %s; %lu file%s "
                      "put back before it", m.name, m.version, c.err[0] ? c.err : "the payload is unreadable",
                      c.restored, c.restored == 1 ? "" : "s");

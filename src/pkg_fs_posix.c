@@ -781,12 +781,16 @@ int pkg_fs_amiga_get(const char *path, unsigned long long *prot, char *comment, 
     return rc;
 }
 
+/* 1 set; -1 the protection was refused; -2 a comment was refused. A file
+ * pkg has just placed has no comment, so an empty one is not written: FAT,
+ * which keeps none, would refuse every file. */
 int pkg_fs_amiga_set(const char *path, unsigned long long prot, const char *comment_latin1)
 {
     if (!SetProtection((CONST_STRPTR)path, (ULONG)(prot & 0xFFFFFFFFull)))
         return -1;
-    if (!SetComment((CONST_STRPTR)path, (CONST_STRPTR)(comment_latin1 ? comment_latin1 : "")))
-        return -1;
+    if (comment_latin1 != NULL && comment_latin1[0] != '\0'
+        && !SetComment((CONST_STRPTR)path, (CONST_STRPTR)comment_latin1))
+        return -2;
     return 1;
 }
 #else
