@@ -58,6 +58,22 @@ p=sys.argv[1]; b=bytearray(open(p,'rb').read()); b[len(b)//2]^=0x55; open(p,'wb'
 $R "$T/d.tar.bz2" > /dev/null 2> "$T/e2"
 [ $? -eq 1 ] && grep -q 'damaged\|checksum' "$T/e2"; ok $? "a damaged bzip2 stream is refused"
 
+# A PAX length with enough decimal digits to overflow size_t must not read
+# beyond the header buffer; the next ordinary member still parses.
+python3 - "$T/overflow.tar" <<'PYTAR'
+import io, sys, tarfile
+body = b"0" * 65520 + b"100 path=x\n" + b" " * 5
+with tarfile.open(sys.argv[1], "w", format=tarfile.USTAR_FORMAT) as archive:
+    pax = tarfile.TarInfo("pax")
+    pax.type = tarfile.XHDTYPE
+    pax.size = len(body)
+    archive.addfile(pax, io.BytesIO(body))
+    member = tarfile.TarInfo("safe")
+    member.size = 1
+    archive.addfile(member, io.BytesIO(b"x"))
+PYTAR
+$R "$T/overflow.tar" | grep -q '^1 .* safe$';       ok $? "an overflowing pax length stays within its header"
+
 if [ -n "${PKG_NIGHTLY_CONTRIB:-}" ]; then
     $R "$PKG_NIGHTLY_CONTRIB" | awk '{print $1, $3}' | sort > "$T/n.mine"
     tar -tvjf "$PKG_NIGHTLY_CONTRIB" | grep -v '^d' | awk '{print $5, $NF}' | sort > "$T/n.tar"

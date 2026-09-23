@@ -25,6 +25,7 @@
 #include "bzlib.h"
 #include "bzlib_private.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -398,11 +399,16 @@ static void pax_path(const unsigned char *b, size_t n, char *out, size_t ol)
     size_t i = 0;
     while (i < n) {
         size_t len = 0, j = i;
-        while (j < n && b[j] >= '0' && b[j] <= '9') len = len * 10 + (size_t)(b[j++] - '0');
-        if (len == 0 || i + len > n || j >= n || b[j] != ' ') return;
+        while (j < n && b[j] >= '0' && b[j] <= '9') {
+            size_t digit = (size_t)(b[j++] - '0');
+            if (len > (SIZE_MAX - digit) / 10) return;
+            len = len * 10 + digit;
+        }
+        if (len == 0 || len > n - i || j >= i + len || b[j] != ' '
+            || b[i + len - 1] != '\n') return;
         j++;
-        if (i + len - j > 5 && memcmp(b + j, "path=", 5) == 0) {
-            size_t vl = i + len - (j + 5) - 1;   /* without the newline */
+        if (i + len - j > 6 && memcmp(b + j, "path=", 5) == 0) {
+            size_t vl = i + len - j - 6;   /* without the newline */
             if (vl >= ol) vl = ol - 1;
             memcpy(out, b + j + 5, vl);
             out[vl] = '\0';
