@@ -131,6 +131,16 @@ int call(const struct pkg_sink *s, const char *verb, op_fn fn, const struct pkg_
                                          o->root, strerror(errno));
             }
             if (!rc) rc = fn(o != NULL ? o : &none);
+            if (lock != NULL && !dry_run) {
+                /* Done or not, what the change wrote goes back to the medium
+                 * before the lock is let go: a caller that needs the change
+                 * to survive a power cut requires flushed: other than no. */
+                const char *how = pkg_fs_flush_root(o->root);
+                kv("flushed", "%s", how ? how : "no");
+                if (how == NULL)
+                    warn("what this change wrote to %s could not be written back to its medium; "
+                         "a power cut could still lose it", o->root);
+            }
             pkg_fs_unlock_root(lock);
         }
     }

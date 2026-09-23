@@ -146,6 +146,12 @@ void  pkg_fs_unlock_dir(void *lock);
  * at a reset; elsewhere <root>/.pkg/lock, released when the process ends. */
 void *pkg_fs_lock_root(const char *root, int *busy);
 void  pkg_fs_unlock_root(void *lock);
+/* The root's volume written back to the medium after a change. On AROS:
+ * ACTION_FLUSH to its handler ("flush"); a handler that does not know it,
+ * as FAT did not, has its device inhibited and released ("inhibit"), which
+ * writes its cache and the device back. Elsewhere the host keeps its own
+ * files ("host"). NULL: it could not be written back. */
+const char *pkg_fs_flush_root(const char *root);
 
 /* ---- the network ------------------------------------------------------ */
 

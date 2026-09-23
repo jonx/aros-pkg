@@ -753,6 +753,12 @@ void pkg_fs_unlock_root(void *lock)
         CloseHandle((HANDLE)lock);
 }
 
+const char *pkg_fs_flush_root(const char *root)
+{
+    (void)root;
+    return "host";
+}
+
 /* ---- the network ------------------------------------------------------ */
 
 #include <process.h>
