@@ -91,6 +91,21 @@ step in `tools/build-aros-regina.sh`, decode a dead-end alert in
 - **Network channels, publishing from a GitHub link, Aminet and AmigaOS
   interoperability, WHDLoad, paid packages, licences listing**: designed in
   the planning repository, none built.
+- **`pkg.library`, the installed record as a shared library.** Other programs
+  can read what is installed only by linking `libpkg.a`, so each carries its
+  own copy of pkg and its own reading of `.pkg/db`. Proposed: an AROS shared
+  library, `pkg.library`, built from the same sources, that opens a root and
+  answers the read-only questions: the installed packages with version, kind
+  and files (`pkg_list`), each against its channel (`pkg_status`), each file
+  against its signed manifest (`pkg_verify`), and which package owns a given
+  file. It takes the root lock for reading, so it never sees a change half
+  written. Changes stay with the `Pkg` command, so signing, consent and the
+  lock keep one owner. An ARexx port on the library, or on `Pkg`, would give
+  scripts the same answers. To decide: the library's function table and
+  version, how records are handed out (tag lists, or the `pkg_sink`
+  callbacks as they are), and whether it opens `SYS:` alone or any root.
+  Closes when a second program lists and verifies installed packages through
+  it on AROS.
 - **No `[PKG*]` gate is claimed.** Goals 1 and 2 touch many gates, but none has
   its `pkg-*.json` verdict artifact; `STATUS.md` in aros-next still says spec.
 
