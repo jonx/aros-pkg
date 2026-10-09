@@ -15,6 +15,7 @@
  *   pkg_lib_search.c     SEARCH, locally and through a portal
  *   pkg_lib_api.c        the operations pkg.h declares, and update checks
  *   pkg_lib_push.c       PUSH
+ *   pkg_lib_events.c     progress events, and the activity line drawn from them
  *
  * A function or variable one module uses from another is declared here
  * and is otherwise private to its file. Each is linked under the prefix
@@ -125,20 +126,30 @@
 #define cmd_upgrade pkgi_cmd_upgrade
 #define cmd_verify pkgi_cmd_verify
 #define cmd_withdraw pkgi_cmd_withdraw
-#define counting pkgi_counting
 #define damage pkgi_damage
-#define did pkgi_did
-#define doing pkgi_doing
-#define doing_bytes pkgi_doing_bytes
-#define doing_things pkgi_doing_things
 #define drawer_attrs pkgi_drawer_attrs
 #define drawer_free pkgi_drawer_free
 #define dry_run pkgi_dry_run
+#define ev_begin pkgi_ev_begin
+#define ev_bytes pkgi_ev_bytes
+#define ev_cancel_seen pkgi_ev_cancel_seen
+#define ev_context pkgi_ev_context
+#define ev_count pkgi_ev_count
+#define ev_depth pkgi_ev_depth
+#define ev_end pkgi_ev_end
+#define ev_end_phase pkgi_ev_end_phase
+#define ev_listening pkgi_ev_listening
+#define ev_op_begin pkgi_ev_op_begin
+#define ev_op_end pkgi_ev_op_end
+#define ev_reentered pkgi_ev_reentered
+#define ev_restored pkgi_ev_restored
+#define ev_total pkgi_ev_total
+#define ev_unwind pkgi_ev_unwind
+#define ev_wait pkgi_ev_wait
 #define fetch pkgi_fetch
 #define fetch_manifest pkgi_fetch_manifest
 #define fetched_free pkgi_fetched_free
 #define file_arch pkgi_file_arch
-#define file_bytes pkgi_file_bytes
 #define file_digest pkgi_file_digest
 #define file_state pkgi_file_state
 #define find_file pkgi_find_file
@@ -488,17 +499,12 @@ void tbl_end(void);
 void tr(const char *fmt, ...);
 void activity_say(void *user, const char *text);
 void activity_show(void *user, const char *text);
-long long file_bytes(const char *path);
-void doing(const char *verb, const char *object);
-void doing_bytes(const char *verb, const char *object, long long whole);
-void doing_things(const char *verb, const char *object, long long n, const char *word);
-void did(void);
-void counting(size_t i, size_t n);
 void short_name(char *out, size_t ol, const char *path);
 void on_transfer(long long done, long long total);
 void on_wait(const char *host);
 void on_archive_read(long long done, long long total);
-int net_get_watched(const char *url, const char *dest, char *err, size_t errlen);
+/* A download, as a FETCH step: `kind` is the PKG_OBJECT_* it brings. */
+int net_get_watched(const char *url, const char *dest, int kind, char *err, size_t errlen);
 void say_err(const char *fmt, ...);
 void say_raw(const char *buf, size_t len);
 const char *res(const char *done, const char *would);
@@ -700,6 +706,30 @@ int cancelled(const char *when);
 int call(const struct pkg_sink *s, const char *verb, op_fn fn, const struct pkg_options *o);
 
 /* pkg_lib_push.c */
-int file_digest(const char *path, char hex[PKG_SHA256_HEXLEN + 1], unsigned long long *size);
+/* A file's SHA-256 and size, read in pieces. With `counted`, the bytes
+ * hashed are the done of the step the caller opened for it. */
+int file_digest(const char *path, char hex[PKG_SHA256_HEXLEN + 1], unsigned long long *size,
+                int counted);
+
+/* pkg_lib_events.c: the steps of an operation, see pkg.h, Progress events.
+ * A step begins and ends in the same function, or is closed by ev_unwind
+ * at the depth the function found, with the function's own result. */
+void ev_op_begin(const char *verb, int draw_line);
+int  ev_op_end(int rc);
+int  ev_reentered(const struct pkg_sink *s, const char *verb);
+int  ev_listening(void);
+void ev_begin(int phase, int kind, const char *object, const char *package,
+              const char *version, int measure, unsigned long long total, int known);
+void ev_count(unsigned long long done);       /* absolute, in the step's unit */
+void ev_total(unsigned long long total);      /* the whole became known */
+void ev_end(int outcome);                     /* PKG_OUTCOME_* */
+int  ev_end_phase(int phase, int outcome);    /* the open step, if it is of that phase */
+int  ev_depth(void);
+int  ev_unwind(int depth, int rc);            /* returns rc */
+void ev_bytes(long long done, long long total);
+void ev_wait(const char *host);
+void ev_cancel_seen(void);
+void ev_restored(int state);                  /* PKG_RESTORE_*, the worst kept */
+void ev_context(const char *package, const char *version);  /* for steps naming none */
 
 #endif

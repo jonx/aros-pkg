@@ -2,7 +2,7 @@
  * Copyright (c) 2026 John Knipper
  *
  * What every operation shares: failure classes, output in both forms,
- * refusals, the activity line, and the filesystem calls traced.
+ * refusals, where the activity line leaves, and the filesystem calls traced.
  *
  * Part of libpkg: see pkg_internal.h for how the library is split.
  */
@@ -261,10 +261,10 @@ static void say(const char *fmt, ...)
 /* ---- the activity line ------------------------------------------------ *
  *
  * What pkg is doing while a step takes time, and that the step is
- * advancing: see pkg_activity.h. A step that can be long says what it is
- * doing with `doing`, hands the module the work as it advances, and ends
- * with `did`. The module alone decides when a line appears, how fast the
- * mark moves and what the measure says; this file knows only the verbs.
+ * advancing: see pkg_activity.h. The line is drawn from the progress events
+ * (pkg_lib_events.c), the same a program receives through pkg_sink.event;
+ * the module alone decides when a line appears, how fast the mark moves and
+ * what the measure says. This is where its text leaves.
  *
  * It leaves on the sink's own channel for it, so a program using libpkg
  * receives the same texts and draws them in its own way. Nothing is drawn in
@@ -290,49 +290,6 @@ void activity_show(void *user, const char *text)
         say("\r  %s", text);
     else
         say("\r%*s\r", 60, "");
-}
-
-/* A step begins. The two forms say how big the work is when that is known,
- * so the sentence that announces it can be printed before the wait and not
- * after it: bytes for a file, a count of things otherwise. */
-/* A file's size, for the sentence that announces the work, or 0 when it
- * cannot be had: a step that does not know says nothing about its size. */
-long long file_bytes(const char *path)
-{
-    FILE *f = fopen(path, "rb");
-    long long n = 0;
-    if (f == NULL)
-        return 0;
-    if (fseek(f, 0, SEEK_END) == 0)
-        n = (long long)ftell(f);
-    fclose(f);
-    return n > 0 ? n : 0;
-}
-
-void doing(const char *verb, const char *object)
-{
-    pkg_activity_step(verb, object, 0, PKG_ACTIVITY_NOTHING, NULL);
-}
-
-void doing_bytes(const char *verb, const char *object, long long whole)
-{
-    pkg_activity_step(verb, object, whole, PKG_ACTIVITY_BYTES, NULL);
-}
-
-void doing_things(const char *verb, const char *object, long long n, const char *word)
-{
-    pkg_activity_step(verb, object, n, PKG_ACTIVITY_THINGS, word);
-}
-
-void did(void)
-{
-    pkg_activity_done();
-}
-
-/* A counter under a step already named: "checking hello  57 of 208". */
-void counting(size_t i, size_t n)
-{
-    pkg_activity_count((unsigned long long)i, (unsigned long long)n, NULL);
 }
 
 /* The last part of a path, which is the name a person gave the file. */
@@ -365,29 +322,32 @@ void short_name(char *out, size_t ol, const char *path)
     snprintf(out, ol, "%s", name);
 }
 
-/* The work advancing, from the layers that do it. */
+/* The work advancing, from the layers that do it: the step open says what
+ * it counts, and these hand it the figures. */
 void on_transfer(long long done, long long total)
 {
-    pkg_activity_bytes(done, total);
+    ev_bytes(done, total);
 }
 void on_wait(const char *host)
 {
-    pkg_activity_waiting(host);
+    ev_wait(host);
 }
 void on_archive_read(long long done, long long total)
 {
-    pkg_activity_bytes(done, total);       /* an archive is read in bytes, and says so */
+    ev_bytes(done, total);                 /* an archive is read in bytes, and says so */
 }
 
-/* A file arriving over the network, named as a person would name it. */
-int net_get_watched(const char *url, const char *dest, char *err, size_t errlen)
+/* A file arriving over the network, as a FETCH step named as a person
+ * would name it. A file not published there is ABSENT, not a failure: a
+ * channel need not have withdrawals. */
+int net_get_watched(const char *url, const char *dest, int kind, char *err, size_t errlen)
 {
     char name[120];
     int rc;
     short_name(name, sizeof name, url);
-    doing("downloading", name);
+    ev_begin(PKG_PHASE_FETCH, kind, name, NULL, NULL, PKG_MEASURE_BYTES_TRANSFERRED, 0, 0);
     rc = pkg_net_get(url, dest, err, errlen);
-    did();
+    ev_end(rc == 0 ? PKG_OUTCOME_OK : rc == 1 ? PKG_OUTCOME_ABSENT : PKG_OUTCOME_FAILED);
     return rc;
 }
 

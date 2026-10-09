@@ -222,6 +222,9 @@ Using pkg
 - [What pkg says, and how it looks](docs/output.md): the role of every line,
   the four meanings that carry a colour, and what a program linking libpkg
   receives in place of ink.
+- [Progress events](docs/events.md): what an operation is doing, step by
+  step, for a program that shows it: phases, counters, waits, restores,
+  and an example of a UI fed from a worker thread.
 
 Publishing
 

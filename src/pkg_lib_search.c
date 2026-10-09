@@ -506,7 +506,11 @@ int cmd_status(const struct pkg_options *a)
             continue;
         if (cancelled("while comparing the root with the channel; nothing was changed"))
             goto out;
+        /* its files read and hashed, its offers compared */
+        ev_begin(PKG_PHASE_INSPECT, PKG_OBJECT_NONE, NULL, in.m[i].name, in.m[i].version,
+                 PKG_MEASURE_NONE, 0, 0);
         stand(a->root, &ix, base, &in.m[i], &s);
+        ev_end(PKG_OUTCOME_OK);
         avail = s.offer ? s.offer->version : "-";
         shown++;
         if (s.newer)
@@ -670,6 +674,9 @@ int upgrade_all(const struct pkg_options *a)
                         "once: UPGRADE ALL never downgrades and never accepts a new key. Give it "
                         "to UPGRADE <name>", a->downgrade ? "DOWNGRADE"
                         : a->key != NULL ? "KEY" : "ACCEPTKEY");
+    /* What every installed package stands at, and the order to take them
+     * in: one resolution, then one per package, each before its placing. */
+    ev_begin(PKG_PHASE_RESOLVE, PKG_OBJECT_NONE, NULL, NULL, NULL, PKG_MEASURE_NONE, 0, 0);
     if (keep_current_setup(a, &ix, &in) != 0) return 1;
     base = target_arch;
     st = (struct standing *)calloc(in.n ? in.n : 1, sizeof *st);
@@ -746,6 +753,7 @@ int upgrade_all(const struct pkg_options *a)
         tr("upgrade %lu of %lu: %s %s to %s", (unsigned long)pos + 1, (unsigned long)ncand,
            st[cand[next]].m->name, st[cand[next]].m->version, st[cand[next]].offer->version);
     }
+    ev_end_phase(PKG_PHASE_RESOLVE, PKG_OUTCOME_OK);
     for (pos = 0; pos < ncand; pos++) {
         const struct standing *s = &st[cand[order[pos]]];
         struct plan p;
@@ -773,8 +781,11 @@ int upgrade_all(const struct pkg_options *a)
         }
         arch_for(base, s->m);
         quiet = 1;
-        ok_plan = plan_target(&p, a, &ix, s->m->name, s->offer->version) == 0
-                  && run_plan(&p, s->m, &placed, &dropped, &kept) == 0;
+        ev_begin(PKG_PHASE_RESOLVE, PKG_OBJECT_NONE, NULL, s->m->name, s->offer->version,
+                 PKG_MEASURE_NONE, 0, 0);
+        ok_plan = plan_target(&p, a, &ix, s->m->name, s->offer->version) == 0;
+        ev_end(ok_plan ? PKG_OUTCOME_OK : PKG_OUTCOME_FAILED);
+        ok_plan = ok_plan && run_plan(&p, s->m, &placed, &dropped, &kept) == 0;
         quiet = 0;
         if (!ok_plan) {
             char codes[8];

@@ -77,7 +77,9 @@ before.
 When something behaves unexpectedly, add `TRACE <file>` (or set
 `PKG_TRACE=<file>`, `-` for stderr): the file then tells every step, every
 file touched, every check with what was expected and found, and every
-choice with its reason. Read it before guessing.
+choice with its reason. Read it before guessing. To follow a long command
+while it runs, `PKG_EVENTS=<file>` writes its progress events, one line per
+step begun, advanced, waiting or ended, with the outcome of each.
 
 ## Words
 

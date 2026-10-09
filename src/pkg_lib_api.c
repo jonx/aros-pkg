@@ -14,6 +14,7 @@ int cancelled(const char *when)
 {
     if (sink == NULL || sink->cancel == NULL || !sink->cancel(sink->user))
         return 0;
+    ev_cancel_seen();
     refuse_n(PKGRC_REFUSED, "report", "cancelled by the caller %s", when);
     return 1;
 }
@@ -59,7 +60,13 @@ static void net_trace_line(const char *line)
 int call(const struct pkg_sink *s, const char *verb, op_fn fn, const struct pkg_options *o)
 {
     static const struct pkg_options none;
+    static int running;
     int rc;
+    /* One operation at a time, and never one from inside another's
+     * callback: every state below belongs to the operation under way. */
+    if (running)
+        return ev_reentered(s, verb);
+    running = 1;
     sink = s;
     verb_name = verb;
     machine = s != NULL && s->structured;
@@ -79,12 +86,18 @@ int call(const struct pkg_sink *s, const char *verb, op_fn fn, const struct pkg_
     net_err[0] = '\0';
     opt_unpacked = o != NULL ? o->unpacked : NULL;
     pkg_fs_on_trace = s != NULL && s->trace != NULL ? net_trace_line : NULL;
-    /* The activity line, for as long as this operation runs and no longer. */
+    /* The operation begins before anything is checked, so a program sees
+     * even a refused request begin and end. The activity line, for a person
+     * watching, is drawn from the same events, for as long as this operation
+     * runs and no longer. */
+    ev_op_begin(verb, !machine && s != NULL && s->progress);
     if (!machine && s != NULL && s->progress) {
         pkg_activity_to(activity_show, activity_say, NULL);
+        pkg_fs_on_tick = pkg_activity_tick;
+    }
+    if (ev_listening()) {
         pkg_fs_on_transfer = on_transfer;
         pkg_fs_on_wait = on_wait;
-        pkg_fs_on_tick = pkg_activity_tick;
         pkg_archive_on_read = on_archive_read;
     }
     placements_clear();
@@ -130,12 +143,22 @@ int call(const struct pkg_sink *s, const char *verb, op_fn fn, const struct pkg_
                               : refuse_c(17, "the root %s cannot be locked for this change: %s",
                                          o->root, strerror(errno));
             }
-            if (!rc) rc = fn(o != NULL ? o : &none);
+            if (!rc) {
+                /* What the verb left open ends here, before the write-back:
+                 * failed with it, or abandoned, never turned into success. */
+                int d = ev_depth();
+                rc = fn(o != NULL ? o : &none);
+                while (ev_depth() > d)
+                    ev_end(rc ? PKG_OUTCOME_FAILED : PKG_OUTCOME_ABANDONED);
+            }
             if (lock != NULL && !dry_run) {
                 /* Done or not, what the change wrote goes back to the medium
                  * before the lock is let go: a caller that needs the change
                  * to survive a power cut requires flushed: other than no. */
-                const char *how = pkg_fs_flush_root(o->root);
+                const char *how;
+                ev_begin(PKG_PHASE_FLUSH, PKG_OBJECT_ROOT, o->root, NULL, NULL, PKG_MEASURE_NONE, 0, 0);
+                how = pkg_fs_flush_root(o->root);
+                ev_end(how ? PKG_OUTCOME_OK : PKG_OUTCOME_FAILED);
                 kv("flushed", "%s", how ? how : "no");
                 if (how == NULL)
                     warn("what this change wrote to %s could not be written back to its medium; "
@@ -146,7 +169,7 @@ int call(const struct pkg_sink *s, const char *verb, op_fn fn, const struct pkg_
     }
     placements_clear();
     rc = rc == 0 ? PKGRC_OK : refused_class ? refused_class : PKGRC_REFUSED;
-    did();
+    ev_op_end(rc);
     pkg_activity_to(NULL, NULL, NULL);
     pkg_fs_on_transfer = NULL;
     pkg_fs_on_wait = NULL;
@@ -156,6 +179,7 @@ int call(const struct pkg_sink *s, const char *verb, op_fn fn, const struct pkg_
     pkg_fs_on_trace = NULL;
     chans_clear();
     sink = NULL;
+    running = 0;
     return rc;
 }
 

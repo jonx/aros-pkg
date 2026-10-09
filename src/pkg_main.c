@@ -157,7 +157,61 @@ static void print_trace(void *user, const char *line)
     }
 }
 
-static struct pkg_sink out_sink = { print_record, print_text, NULL, 0, NULL, NULL, NULL, 0, print_line };
+/* PKG_EVENTS=<file>: the library's progress events, one line each, as a
+ * program receives them through pkg_sink.event; "-" sends them to stderr.
+ * For watching what a front end would be shown, and for a script that
+ * wants it; the C structure in pkg.h is the contract, these lines follow
+ * it field for field. Never mixed into stdout. */
+static const char *events_path;
+static FILE *events_file;
+
+static void print_event(void *user, const struct pkg_event *e)
+{
+    char line[900];
+    int n;
+    (void)user;
+    n = snprintf(line, sizeof line, "%s\top=%lu\tverb=%s", pkg_event_name(e->type), e->op, e->verb);
+    if (e->type == PKG_EVENT_OP_BEGIN || e->type == PKG_EVENT_OP_END)
+        n += snprintf(line + n, sizeof line - (size_t)n, "\tdryrun=%d", e->dryrun);
+    if (e->type == PKG_EVENT_OP_END)
+        n += snprintf(line + n, sizeof line - (size_t)n, "\tcode=%d\toutcome=%s\trestore=%s\tcancel=%d",
+                      e->code, pkg_outcome_name(e->outcome), pkg_restore_name(e->restore), e->cancel);
+    if (e->step != 0) {
+        n += snprintf(line + n, sizeof line - (size_t)n, "\tstep=%lu\tparent=%lu\tattempt=%u\tphase=%s",
+                      e->step, e->parent, e->attempt, pkg_phase_name(e->phase));
+        if (e->package) n += snprintf(line + n, sizeof line - (size_t)n, "\tpackage=%s", e->package);
+        if (e->version) n += snprintf(line + n, sizeof line - (size_t)n, "\tversion=%s", e->version);
+        if (e->object)
+            n += snprintf(line + n, sizeof line - (size_t)n, "\t%s=%s", pkg_object_name(e->object_kind),
+                          e->object);
+        if (e->measure != PKG_MEASURE_NONE) {
+            n += snprintf(line + n, sizeof line - (size_t)n, "\t%s=%llu", pkg_measure_name(e->measure), e->done);
+            if (e->total_known)
+                n += snprintf(line + n, sizeof line - (size_t)n, "\ttotal=%llu", e->total);
+            else
+                n += snprintf(line + n, sizeof line - (size_t)n, "\ttotal=unknown");
+        }
+        if (e->type == PKG_EVENT_STEP_WAIT)
+            n += snprintf(line + n, sizeof line - (size_t)n, "\twait=%s", pkg_wait_name(e->wait));
+        if (e->type == PKG_EVENT_STEP_END)
+            n += snprintf(line + n, sizeof line - (size_t)n, "\toutcome=%s\tcode=%d",
+                          pkg_outcome_name(e->outcome), e->code);
+    }
+    if (n < 0 || (size_t)n >= sizeof line)
+        n = (int)strlen(line);
+    if (strcmp(events_path, "-") == 0) {
+        pkg_err("event %s\n", line);
+        return;
+    }
+    if (events_file == NULL)
+        events_file = fopen(events_path, "a");
+    if (events_file != NULL) {
+        fprintf(events_file, "%s\n", line);
+        fflush(events_file);
+    }
+}
+
+static struct pkg_sink out_sink = { .record = print_record, .text = print_text, .line = print_line };
 
 /* A usage error found while reading the words, answered like any refusal. */
 static int usage_errorf(const char *fmt, ...)
@@ -641,7 +695,7 @@ static int usage(void)
     usage_line("\n%sKinds%s     image (a program on one volume to mount), application (loose files), library,\n"
                "          device, class, font, catalog, startup, boot, data, sdk, slave\n", b, r);
     usage_line("%sSettings%s  PKG_SIGNKEY the key SIGN defaults to; PKG_PUSHKEY; PKG_OUTPUT=machine;\n"
-               "          PKG_TRACE=<file>; PKG_COLOR=always|never; PKG_PROGRESS=1\n", b, r);
+               "          PKG_TRACE=<file>; PKG_EVENTS=<file>; PKG_COLOR=always|never; PKG_PROGRESS=1\n", b, r);
     usage_line("%sExit code%s 0 done; 10 to 18 refused, the number is the class; 20 a wrong command\n", b, r);
     usage_line("%sRoots%s     ROOT wins, then ENVIRONMENT, then the default environment. pkg U updates pkg\n"
                "          itself; pkg REMOVE, with no name, uninstalls it.\n", b, r);
@@ -1056,6 +1110,8 @@ static int run_verb(int argc, char **argv)
                          : PKG_ACTIVITY_ASCII);
     trace_path = getenv("PKG_TRACE");
     out_sink.trace = trace_path != NULL && *trace_path ? print_trace : NULL;
+    events_path = getenv("PKG_EVENTS");
+    out_sink.event = events_path != NULL && *events_path ? print_event : NULL;
     /* A person at a terminal is shown the activity line while a step is
      * long. PKG_PROGRESS decides it outright when it is set: 1 draws it
      * wherever the output goes, anything else switches it off. */

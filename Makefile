@@ -105,6 +105,10 @@ aros-channel: build/pkg
 build/example-%: examples/%.c build/libpkg.a include/pkg.h include/pkg_activity.h
 	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ $< build/libpkg.a
 
+# The events example runs the operation on a thread of its own.
+build/example-events: examples/events.c build/libpkg.a include/pkg.h
+	$(CC) $(CFLAGS) $(CPPFLAGS) -pthread -o $@ $< build/libpkg.a
+
 # Windows, cross-built with mingw-w64. tools/make-windows-kit.sh wraps it in a
 # test kit to run on a Windows machine.
 WINCC ?= x86_64-w64-mingw32-gcc
@@ -130,6 +134,10 @@ build/pkg-linux-%: src/pkg_main.c $(CLI) $(LIB) $(CORE) $(HOST) $(HDR)
 build/test_api: tests/test_api.c $(LIB) $(CORE) $(HOST) $(HDR)
 	@mkdir -p build
 	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ tests/test_api.c $(LIB) $(CORE) $(HOST)
+
+build/test_events: tests/test_events.c $(LIB) $(CORE) $(HOST) $(HDR)
+	@mkdir -p build
+	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ tests/test_events.c $(LIB) $(CORE) $(HOST)
 
 build/test_update: tests/test_update.c build/libpkg.a $(HDR)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ $< build/libpkg.a
@@ -181,6 +189,10 @@ test-run:
 	@echo "== activity"
 	@PKG=./build/pkg sh tests/activity.sh
 	@PKG=./build/pkg python3 tests/activity-network.py
+	@echo "== events"
+	@rm -f build/test_events
+	@$(MAKE) --no-print-directory build/test_events
+	@sh tests/events.sh
 	@echo "== network"
 	@PKG=./build/pkg sh tests/network.sh
 	@echo "== channels"
@@ -223,8 +235,8 @@ test-run:
 	@PKG=./build/pkg python3 tests/selfupdate.py
 	@PKG=./build/pkg python3 tests/selfupdate-bootstrap.py
 	@echo "== examples"
-	@rm -f build/libpkg.a build/example-basic build/example-browse
-	@$(MAKE) --no-print-directory build/example-basic build/example-browse
+	@rm -f build/libpkg.a build/example-basic build/example-browse build/example-events
+	@$(MAKE) --no-print-directory build/example-basic build/example-browse build/example-events
 	@PKG=./build/pkg sh tests/examples.sh
 
 # The image writer judged by amitools, an FFS written apart from it. Needs the
@@ -273,6 +285,10 @@ test-ubsan:
 		-o build/san/test_api tests/test_api.c $(LIB) $(CORE) $(HOST)
 	@./build/san/test_api > /dev/null || { echo "test-ubsan: test_api FAILED"; exit 1; }
 	@$(CC) -std=c99 -Wall -Wextra -Werror $(SAN) $(CPPFLAGS) \
+		-o build/san/test_events tests/test_events.c $(LIB) $(CORE) $(HOST)
+	@TEST_EVENTS=./build/san/test_events sh tests/events.sh > build/san/events.log 2>&1 \
+		|| { tail -20 build/san/events.log; echo "test-ubsan: events FAILED"; exit 1; }
+	@$(CC) -std=c99 -Wall -Wextra -Werror $(SAN) $(CPPFLAGS) \
 		-o build/san/pkg src/pkg_main.c $(CLI) $(LIB) $(CORE) $(HOST)
 	@PKG=./build/san/pkg sh tests/e2e.sh > build/san/e2e.log 2>&1 \
 		|| { tail -20 build/san/e2e.log; echo "test-ubsan: e2e FAILED"; exit 1; }
@@ -282,7 +298,7 @@ test-ubsan:
 		|| { tail -20 build/san/status.log; echo "test-ubsan: status FAILED"; exit 1; }
 	@PKG=./build/san/pkg sh tests/image.sh > build/san/image.log 2>&1 \
 		|| { tail -20 build/san/image.log; echo "test-ubsan: image FAILED"; exit 1; }
-	@echo "test-ubsan: PASS, units, e2e, deps, status and image under -fsanitize=undefined,address"
+	@echo "test-ubsan: PASS, units, events, e2e, deps, status and image under -fsanitize=undefined,address"
 
 # A big-endian COMPILE of the portable core. Running on a big-endian target is
 # separate work and is not claimed here.

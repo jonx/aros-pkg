@@ -9,7 +9,11 @@ what pkg shows, and what it never shows.
 
 The whole behaviour lives in one file, `src/pkg_activity.c`, behind
 `include/pkg_activity.h`. Nothing else decides when a line appears, how
-often it is redrawn, or what it says. `examples/activity.c` is a sample
+often it is redrawn, or what it says. What it is told comes from the
+[progress events](events.md), the same a program receives through
+`pkg_sink.event`: the line shows the steps that count something (a
+download, an archive read, the files checked, written and placed, a
+channel's entries, an upload) and nothing the events do not say. `examples/activity.c` is a sample
 that goes through every case; it is built as `build/example-activity` and
 takes no network and no large file.
 
@@ -77,8 +81,11 @@ a result, a refusal, a table, or the end of the command.
 
 ## Connecting work to the display
 
-`pkg_activity_step` draws a measured step at zero before returning to its
-caller. The same line names the work and carries its counter. A byte total
+`src/pkg_lib_events.c` turns each step into these calls: a step's begin
+into `pkg_activity_step`, its counters into `pkg_activity_bytes` or
+`pkg_activity_count`, a wait into `pkg_activity_waiting`, its end into
+`pkg_activity_done`. `pkg_activity_step` draws a measured step at zero
+before returning to its caller. The same line names the work and carries its counter. A byte total
 learned from an HTTP response is reported at zero before reading its body.
 The archive reader reports its file size before reading the archive.
 

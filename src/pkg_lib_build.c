@@ -202,6 +202,18 @@ static int ib_data(const struct pkg_archive_entry *e, const unsigned char *buf, 
     return ib->oom ? -1 : 0;
 }
 
+/* An archive read through, as a FETCH step counted in its stored bytes: the
+ * reader reports them as it goes, against the file's size. */
+static void archive_step(const char *archive)
+{
+    const char *base = strrchr(archive, '/');
+    struct pkg_fs_id id;
+    ev_begin(PKG_PHASE_FETCH, PKG_OBJECT_ARCHIVE, base != NULL ? base + 1 : archive, NULL, NULL,
+             PKG_MEASURE_BYTES_READ, 0, 0);
+    if (pkg_fs_identity(archive, &id) == 0 && id.exists)
+        ev_total(id.size);
+}
+
 /* The archive's index, built when missing or stale; the caller frees it. */
 static char *archive_index(const char *archive, char *err, size_t errlen)
 {
@@ -235,9 +247,9 @@ static char *archive_index(const char *archive, char *err, size_t errlen)
     ib = (struct idx_build *)calloc(1, sizeof *ib);
     if (ib == NULL) { snprintf(err, errlen, "out of memory"); free(ip); return NULL; }
     ib_put(ib, head);
-    doing("reading", "the archive");
+    archive_step(archive);
     rc = pkg_archive_walk(archive, ib_want, ib_data, ib, err, errlen);
-    did();
+    ev_end(rc == 0 ? PKG_OUTCOME_OK : PKG_OUTCOME_FAILED);
     if (rc != 0 || ib->oom) {
         if (ib->oom && !err[0]) snprintf(err, errlen, "out of memory");
         free(ib->out); free(ib); free(ip);
@@ -1112,9 +1124,9 @@ static int read_info(const struct pkg_options *a)
         snprintf(info_shown, sizeof info_shown, "%s!/%s", arch_file, g.want);
         tr("reading %s out of %s", g.want, arch_file);
         err[0] = '\0';
-        doing("reading", "the archive");
+        archive_step(arch_file);
         rc = pkg_archive_walk(arch_file, grab_want, grab_data, &g, err, sizeof err);
-        did();
+        ev_end(rc == 0 || g.found ? PKG_OUTCOME_OK : PKG_OUTCOME_FAILED);
         if (rc != 0 && !g.found) {
             free(g.data);
             if (g.oom) return refuse("out of memory");
@@ -1309,7 +1321,15 @@ static int archive_digest(const char *archive, char hex[PKG_SHA256_HEXLEN + 1], 
     }
     free(buf);
     tr("hashing %s", archive);
-    if (file_digest(archive, hex, size) != 0) { free(sp); return -1; }
+    {
+        const char *base = strrchr(archive, '/');
+        int hashed;
+        ev_begin(PKG_PHASE_PREPARE, PKG_OBJECT_ARCHIVE, base != NULL ? base + 1 : archive, NULL, NULL,
+                 PKG_MEASURE_BYTES_HASHED, id.size, 1);
+        hashed = file_digest(archive, hex, size, 1) == 0;
+        ev_end(hashed ? PKG_OUTCOME_OK : PKG_OUTCOME_FAILED);
+        if (!hashed) { free(sp); return -1; }
+    }
     n = snprintf(line, sizeof line, "sha256 %s%s", hex, want);
     if (pkg_fs_write_atomic(sp, line, (size_t)n) != 0)
         warn("the archive's digest could not be kept in %s; it is computed again next time", sp);
@@ -1424,14 +1444,14 @@ int build_package(const struct pkg_options *a, struct built *out)
             return refuse_c(20, "\"%s\" is not a directory", a->target);
         d.root = a->target;
         d.files = a->files;
-        doing("reading", a->target);
+        ev_begin(PKG_PHASE_FETCH, PKG_OBJECT_FILE, a->target, NULL, NULL, PKG_MEASURE_NONE, 0, 0);
         if (pkg_fs_walk(a->target, load_one, leave_out, &d, &out->skipped, d.err, sizeof d.err) != 0) {
-            did();
             refuse_c(20, "%s", d.err[0] ? d.err : "cannot read the drawer");
+            ev_end(PKG_OUTCOME_FAILED);
             drawer_free(&d);
             return 1;
         }
-        did();
+        ev_end(PKG_OUTCOME_OK);
     }
     if (info_files) {
         /* Every path the .pkginfo claims must be there: a port that moved a

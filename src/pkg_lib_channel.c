@@ -109,6 +109,18 @@ int net_failed;
 static char fetched_once[16][65];  /* mutable files already fetched in this run */
 size_t nfetched_once;
 
+/* What a channel's file is, for the step that downloads it. */
+static int object_kind(const char *rel)
+{
+    size_t n = strlen(rel);
+    if (strcmp(rel, "index") == 0) return PKG_OBJECT_INDEX;
+    if (strncmp(rel, "archives/", 9) == 0) return PKG_OBJECT_ARCHIVE;
+    if (n > 4 && strcmp(rel + n - 4, ".sig") == 0) return PKG_OBJECT_SIGNATURE;
+    if (n > 9 && strcmp(rel + n - 9, ".manifest") == 0) return PKG_OBJECT_MANIFEST;
+    if (n > 4 && strcmp(rel + n - 4, ".pkg") == 0) return PKG_OBJECT_PAYLOAD;
+    return PKG_OBJECT_FILE;
+}
+
 char *chan_file(const char *channel, const char *rel)
 {
     char *cache, sub[PKG_SHA256_HEXLEN + 1], url[2300], fetch_id[65], *dir, *local;
@@ -151,7 +163,7 @@ char *chan_file(const char *channel, const char *rel)
         char *slash = strrchr(local, '/');
         if (slash) { *slash = '\0'; pkg_fs_mkdirs(local); *slash = '/'; }
     }
-    rc = net_get_watched(url, local, net_err, sizeof net_err);
+    rc = net_get_watched(url, local, object_kind(rel), net_err, sizeof net_err);
     tr("fetched %s: %s", url, rc == 0 ? "ok" : rc == 1 ? "not there" : net_err);
     if (rc == 1)
         pkg_fs_unlink(local);       /* not published there: no stale copy either */

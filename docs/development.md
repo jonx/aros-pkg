@@ -289,8 +289,10 @@ the templates, and `tests/test_args.c` holds the reader to its rules. A graphica
 adapter links the library (`make build/libpkg.a`) and calls `pkg_install`,
 `pkg_show` and the rest with a sink: structured, it receives the same fields
 the command line prints with `MACHINE`; otherwise sentences for a person; and,
-if it asks, a trace of every step. The library writes nothing to stdout and
-reads no environment. `tests/test_api.c` drives it as a front end would.
+if it asks, a trace of every step and its [progress events](events.md). The
+library writes nothing to stdout and reads no environment. `tests/test_api.c`
+drives it as a front end would; `tests/test_events.c` checks every event of
+every operation it runs, through `tests/events.sh`.
 
 ## Examples
 
@@ -300,8 +302,10 @@ publish, an install, a listing, and a refusal read with its `next`.
 takes: items with their fields apart, whether each version is installed,
 suggestions for a mistyped name, a Cancel button, the trace. It was first
 written by an agent from `pkg.h` alone, as a test of that header, then
-adopted. Both build against `build/libpkg.a` and run in `make test`
-(`tests/examples.sh`).
+adopted. `examples/events.c` runs an install and an upgrade on a worker
+thread and shows their progress events on the main one, through a queue, as
+a window would. All three build against `build/libpkg.a` and run in
+`make test` (`tests/examples.sh`).
 
 ## Diagnosing
 

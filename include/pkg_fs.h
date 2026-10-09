@@ -84,9 +84,9 @@ extern void (*pkg_fs_on_tick)(void);
  * Used by the POSIX/AROS network transport, including TLS's socket layer. */
 int pkg_fs_socket_wait(int socket, int writing);
 
-/* Milliseconds counted from some moment of this run: gettimeofday under
- * POSIX and on AROS, GetTickCount64 on Windows. Only differences are used,
- * so which moment it counts from does not matter. */
+/* Milliseconds counted from some moment of this run: CLOCK_MONOTONIC under
+ * POSIX, gettimeofday on AROS, GetTickCount64 on Windows. Only differences
+ * are used, so which moment it counts from does not matter. */
 long long pkg_fs_now_ms(void);
 
 /* The network's own account of itself, for a TRACE: one line at a time,

@@ -8,7 +8,8 @@
 # libpkg's operations, cut along their own sections: see src/pkg_internal.h.
 LIBMODS = src/pkg_lib_core.c src/pkg_lib_keys.c src/pkg_lib_build.c src/pkg_lib_channel.c \
           src/pkg_lib_root.c src/pkg_lib_verbs.c src/pkg_lib_resolve.c src/pkg_lib_status.c \
-          src/pkg_lib_search.c src/pkg_lib_api.c src/pkg_lib_push.c
+          src/pkg_lib_search.c src/pkg_lib_api.c src/pkg_lib_push.c \
+          src/pkg_lib_events.c
 LIB  = $(LIBMODS) src/pkg_activity.c src/pkg_update.c src/pkg_environment.c
 # Portable C99: everything except the host filesystem layer.
 CORE = src/pkg_container.c src/pkg_sha256.c src/pkg_sha512.c src/pkg_ed25519.c \

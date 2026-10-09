@@ -145,6 +145,7 @@ activity line; AROS has no `tee`.
 | `PKG_PUSHKEY` | the portal key `PUSH` sends; never put it on the command line |
 | `PKG_OUTPUT` | `machine`: the same as `MACHINE` on every command |
 | `PKG_TRACE` | the same as `TRACE <file>` on every command |
+| `PKG_EVENTS` | a file that receives the progress events, one line each, as a program gets them from `pkg_sink.event` ([events.md](events.md)); `-` for stderr. Never mixed into stdout |
 | `PKG_PROGRESS` | `1`: draw the activity line wherever the output goes; anything else switches it off. Unset, it appears at a terminal or an AROS Shell window and nowhere else |
 | `PKG_PROGRESS_AFTER` | how long a step must last, in milliseconds, before the activity line appears; 500 when unset, `0` to draw it at once |
 | `PKG_CHECK_WORDS` | `1`: the words of the command are read against the verb's template and nothing is run: exit 0 and `result: words-taken`, or the usage refusal a real run would give (20). For a test that holds every command a page shows to the parser itself |

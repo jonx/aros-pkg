@@ -64,6 +64,19 @@ step in `tools/build-aros-regina.sh`, decode a dead-end alert in
   `afsplus.aros.protection` xattrs (afsplus e026786, ADR-120). PUBLISH could
   read them as the native source there, before `.ameta`; today such a drawer
   needs a `.ameta` like any host folder.
+- **What the progress events found in the engine** ([docs/events.md](docs/events.md#what-the-events-cannot-say-yet)),
+  seen 2026-10-09 while connecting them. A first INSTALL into a root that
+  does not exist yet takes no lock and is not written back to its medium
+  (`call()` locks and flushes only an existing root). A package refused
+  while its files are placed stays partly placed until the same operation is
+  repeated (`restore incomplete`), while the dependencies placed before it
+  are taken back out. The payload is read and hashed whole, so its steps
+  have no intermediate count. SEARCH through a portal sends no steps, and
+  IMAGE builds its volume without one. Closing each would be: lock and flush
+  the root once INSTALL has created it; take the refused package's placed
+  files back from staging, or keep its dependencies when it cannot be; read
+  and hash the payload in pieces; give portal requests and the image writer
+  steps of their own.
 - **The single-file bootstrap, rest of `[PKG23]`**: a database location for
   read-only media, self-upgrade with a fallback, a lock against two Pkg runs
   on one root.

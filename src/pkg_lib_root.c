@@ -437,18 +437,24 @@ static char *locate_archive(const char *channel, const struct pkg_manifest *m, c
     if (!machine)
         say_kind(PKG_LINE_NOTE, "%s\n", "downloading %s (%llu MB) from %s, once for every package it holds", an,
             (m->archive_size + 524288ull) / 1048576ull, m->archive_url);
-    rc = net_get_watched(m->archive_url, dest, net_err, sizeof net_err);
-    if (rc == 0 && file_digest(dest, hex, &size) == 0
-        && size == m->archive_size && strcmp(hex, m->archive_sha) == 0) {
-        tr("%s: downloaded %s, %llu bytes, SHA-256 as signed", what, m->archive_url, size);
-        from_kind = "download";
-        return dest;
-    }
+    rc = net_get_watched(m->archive_url, dest, PKG_OBJECT_ARCHIVE, net_err, sizeof net_err);
     if (rc == 0) {
+        int good;
+        ev_begin(PKG_PHASE_VERIFY, PKG_OBJECT_ARCHIVE, an, NULL, NULL, PKG_MEASURE_BYTES_VERIFIED,
+                 m->archive_size, 1);
+        good = file_digest(dest, hex, &size, 1) == 0
+               && size == m->archive_size && strcmp(hex, m->archive_sha) == 0;
+        if (good) {
+            ev_end(PKG_OUTCOME_OK);
+            tr("%s: downloaded %s, %llu bytes, SHA-256 as signed", what, m->archive_url, size);
+            from_kind = "download";
+            return dest;
+        }
         pkg_fs_unlink(dest);
         refuse_c(12, "the archive downloaded from %s is not the one %s was signed with: %llu bytes "
                  "and SHA-256 %s, where the manifest says %llu and %s. It was deleted; nothing was "
                  "installed", m->archive_url, what, size, hex, m->archive_size, m->archive_sha);
+        ev_end(PKG_OUTCOME_FAILED);
         free(dest);
         return NULL;
     }
@@ -579,6 +585,8 @@ static int fetch_from_dir(const char *dir, struct fetched *f, const char *prefix
     int rc = 1;
 
     if (w == NULL) { refuse("out of memory"); return 1; }
+    ev_begin(PKG_PHASE_VERIFY, PKG_OBJECT_ARCHIVE, dir, f->m.name, f->m.version,
+             PKG_MEASURE_FILES_VERIFIED, f->m.nfiles, 1);
     for (i = 0; i < f->m.nfiles; i++) {
         char rel[2200], hex[PKG_SHA256_HEXLEN + 1], *full;
         unsigned char *buf = NULL;
@@ -610,11 +618,13 @@ static int fetch_from_dir(const char *dir, struct fetched *f, const char *prefix
             goto done;
         }
         free(buf);
+        ev_count(i + 1);
     }
     if (pkg_writer_finish(w, &f->pkg, &f->pkg_len) != PKG_OK) { refuse("out of memory"); goto done; }
     tr("%s: %lu files taken from the unpacked archive at %s", what, (unsigned long)f->m.nfiles, dir);
     rc = 0;
 done:
+    ev_end(rc == 0 ? PKG_OUTCOME_OK : PKG_OUTCOME_FAILED);
     pkg_writer_free(w);
     return rc;
 }
@@ -673,12 +683,14 @@ static int fetch_from_archive(const char *channel, struct fetched *f, const char
     map = map_read(ap, &f->m);
     if (map != NULL) {
         tr("%s: %s has a block map; reading only the blocks its files lie in", what, ap);
-        doing("reading", "the archive");
+        /* A few blocks out of the middle: there is no whole to count against */
+        ev_begin(PKG_PHASE_FETCH, PKG_OBJECT_ARCHIVE, an, NULL, NULL, PKG_MEASURE_BYTES_READ, 0, 0);
         rc = pkg_archive_read_mapped(ap, map, af_want, af_data, &af, err, sizeof err);
-        did();
         if (rc == 0 && af_as_signed(&af)) {
+            ev_end(PKG_OUTCOME_OK);
             used_map = 1;
         } else {
+            ev_end(PKG_OUTCOME_RETRIED);         /* read again whole, as a step of its own */
             tr("%s: the block map of %s did not serve this read; reading the archive whole and "
                "writing it again", what, ap);
             af_clear(&af, n);
@@ -689,11 +701,13 @@ static int fetch_from_archive(const char *channel, struct fetched *f, const char
     }
     from_note(used_map ? "map" : from_kind, ap);
     if (!used_map) {
-        const char *base = strrchr(ap, '/');
+        struct pkg_fs_id id;
         tr("%s: reading its files out of %s", what, ap);
-        doing_bytes("reading the archive", base != NULL ? base + 1 : ap, file_bytes(ap));
+        ev_begin(PKG_PHASE_FETCH, PKG_OBJECT_ARCHIVE, an, NULL, NULL, PKG_MEASURE_BYTES_READ,
+                 0, 0);
+        if (pkg_fs_identity(ap, &id) == 0 && id.exists)
+            ev_total(id.size);                   /* said before the first byte is read */
         rc = pkg_archive_walk_map(ap, af_want, af_data, &af, &map, err, sizeof err);
-        did();
         if (rc != 0) {
             if (af.oversize >= 0)
                 refuse_c(12, "the archive %s holds a %s longer than the %llu bytes %s's signed manifest "
@@ -701,8 +715,10 @@ static int fetch_from_archive(const char *channel, struct fetched *f, const char
                          f->m.files[af.oversize].path, f->m.files[af.oversize].size, what);
             else
                 refuse_c(12, "the archive %s is refused: %s. Nothing was installed", ap, err[0] ? err : "unreadable");
+            ev_end(PKG_OUTCOME_FAILED);
             goto done;
         }
+        ev_end(PKG_OUTCOME_OK);
         map_write(ap, &f->m, map);
     }
     w = pkg_writer_new();
@@ -732,17 +748,20 @@ done:
 
 int show_defers_archives;    /* set by SHOW, which checks archives in one pass each */
 
-int fetch_manifest(const char *channel, const struct entry *e, struct fetched *f)
+static int manifest_checked(const char *channel, const struct entry *e, struct fetched *f)
 {
     char *mo = object_path(channel, e->digest, "manifest");
     char *so = object_path(channel, e->digest, "sig");
-    char hex[PKG_SHA256_HEXLEN + 1], err[300], what[160];
+    char hex[PKG_SHA256_HEXLEN + 1], err[300], what[160], shown[32];
     int rc = 1;
 
     memset(f, 0, sizeof *f);
     pkg_manifest_init(&f->m);
     snprintf(what, sizeof what, "%s %s", e->name, e->version);
     memcpy(f->digest, e->digest, sizeof f->digest);
+    snprintf(shown, sizeof shown, "%.12s.manifest", e->digest);
+    ev_begin(PKG_PHASE_VERIFY, PKG_OBJECT_MANIFEST, shown, e->name, e->version,
+             PKG_MEASURE_NONE, 0, 0);
     if (mo == NULL || so == NULL) {
         if (net_failed) refuse_c(17, "cannot read package metadata: %s", net_err);
         else refuse("out of memory");
@@ -783,16 +802,38 @@ int fetch_manifest(const char *channel, const struct entry *e, struct fetched *f
     }
     rc = 0;
 out:
+    ev_end(rc == 0 ? PKG_OUTCOME_OK : PKG_OUTCOME_FAILED);
     free(mo); free(so);
     return rc;
 }
 
+/* The steps of a fetch name the package they fetch, downloads included. */
+int fetch_manifest(const char *channel, const struct entry *e, struct fetched *f)
+{
+    int rc;
+    ev_context(e->name, e->version);
+    rc = manifest_checked(channel, e, f);
+    ev_context(NULL, NULL);
+    return rc;
+}
+
+static int fetch_payload(const char *channel, const struct entry *e, struct fetched *f);
+
 int fetch(const char *channel, const struct entry *e, struct fetched *f)
 {
+    int rc;
+    ev_context(e->name, e->version);
+    rc = manifest_checked(channel, e, f) != 0 || fetch_payload(channel, e, f) != 0;
+    ev_context(NULL, NULL);
+    return rc;
+}
+
+static int fetch_payload(const char *channel, const struct entry *e, struct fetched *f)
+{
     char *po = NULL;
-    char hex[PKG_SHA256_HEXLEN + 1], what[160];
+    char hex[PKG_SHA256_HEXLEN + 1], what[160], shown[32];
+    struct pkg_fs_id id;
     int rc = 1;
-    if (fetch_manifest(channel, e, f) != 0) return 1;
     snprintf(what, sizeof what, "%s %s", e->name, e->version);
     /* 4. The payload the signed manifest names, or its files in the archive
      *    it names, each checked against the manifest when it is placed. */
@@ -802,17 +843,34 @@ int fetch(const char *channel, const struct entry *e, struct fetched *f)
         goto out;
     }
     po = object_path(channel, f->m.payload, "pkg");
-    if (po == NULL) { refuse("out of memory"); goto out; }
-    if (pkg_fs_read(po, &f->pkg, &f->pkg_len) != 0) {
-        refuse_c(11, "the channel lists %s but its payload is missing", what);
+    if (po == NULL) {
+        if (net_failed) refuse_c(17, "cannot read the payload of %s: %s", what, net_err);
+        else refuse("out of memory");
         goto out;
     }
+    snprintf(shown, sizeof shown, "%.12s.pkg", f->m.payload);
+    ev_begin(PKG_PHASE_FETCH, PKG_OBJECT_PAYLOAD, shown, NULL, NULL, PKG_MEASURE_BYTES_READ,
+             0, 0);
+    if (pkg_fs_identity(po, &id) == 0 && id.exists)
+        ev_total(id.size);
+    if (pkg_fs_read(po, &f->pkg, &f->pkg_len) != 0) {
+        refuse_c(11, "the channel lists %s but its payload is missing", what);
+        ev_end(PKG_OUTCOME_FAILED);
+        goto out;
+    }
+    ev_count(f->pkg_len);
+    ev_end(PKG_OUTCOME_OK);
+    ev_begin(PKG_PHASE_VERIFY, PKG_OBJECT_PAYLOAD, shown, NULL, NULL, PKG_MEASURE_BYTES_VERIFIED,
+             f->pkg_len, 1);
     pkg_sha256_hex(f->pkg, f->pkg_len, hex);
+    ev_count(f->pkg_len);
     if (strcmp(hex, f->m.payload) != 0) {
         refuse_c(12, "the payload of %s does not match its signed manifest; expected %s, found %s. "
                "Nothing was installed", what, f->m.payload, hex);
+        ev_end(PKG_OUTCOME_FAILED);
         goto out;
     }
+    ev_end(PKG_OUTCOME_OK);
     tr("%s: payload %s matches the signed manifest", what, hex);
     rc = 0;
 out:
@@ -1454,6 +1512,7 @@ static int check_entry(const struct pkg_entry *e, void *ctx)
         return 1;
     }
     w->i++;
+    ev_count(w->i);
     return 0;
 }
 
@@ -1474,7 +1533,6 @@ static int stage_entry(const struct pkg_entry *e, void *ctx)
         if (pf != NULL && s->keep[pf - s->m->files] >= 2)
             return 0;           /* stays as it is: nothing to write */
     }
-    counting(s->done++, s->todo);
     p = pkg_join(s->staging, e->path);
     if (p == NULL || pkg_fs_write_new(p, e->data, e->data_len) != 0) {
         snprintf(s->err, sizeof s->err, "cannot stage \"%s\": %s", e->path, strerror(errno));
@@ -1482,6 +1540,7 @@ static int stage_entry(const struct pkg_entry *e, void *ctx)
         return 1;
     }
     free(p);
+    ev_count(++s->done);
     return 0;
 }
 
@@ -1825,8 +1884,12 @@ char *beside(const char *path, const char *suffix)
     return out;
 }
 
-static int apply(const char *root, const struct pkg_manifest *old, const struct fetched *f,
-                 unsigned long *placed, unsigned long *dropped, unsigned long *kept)
+/* Set once apply has changed the root for the package it places: from then
+ * on a refusal leaves that package partly placed. */
+static int apply_touched;
+
+static int apply_steps(const char *root, const struct pkg_manifest *old, const struct fetched *f,
+                       unsigned long *placed, unsigned long *dropped, unsigned long *kept)
 {
     const struct pkg_manifest *m = &f->m;
     struct walk_ctx wc;
@@ -1848,11 +1911,14 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
     *placed = *dropped = *kept = 0;
     if (placement_check(m)) return 1;
     wc.m = m; wc.i = 0; wc.err[0] = '\0';
+    ev_begin(PKG_PHASE_VERIFY, PKG_OBJECT_PAYLOAD, NULL, m->name, m->version,
+             PKG_MEASURE_FILES_VERIFIED, m->nfiles, 1);
     st = pkg_read(f->pkg, f->pkg_len, check_entry, &wc, &stopped);
     if (st != PKG_OK || wc.i != m->nfiles)
         return refuse_c(12, "the payload of %s %s is refused: %s; nothing was changed", m->name, m->version,
                       st == PKG_E_STOPPED ? wc.err
                       : st != PKG_OK ? pkg_strstatus(st) : "the manifest lists files the container lacks");
+    ev_end(PKG_OUTCOME_OK);
 
     keep = calloc(m->nfiles ? m->nfiles : 1, 1);
     if (keep == NULL)
@@ -1862,10 +1928,11 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
     resumed = 0;
     others.m = NULL;
     others.n = 0;
-    doing_things("checking", m->name, (long long)m->nfiles, "file");
+    ev_begin(PKG_PHASE_INSPECT, PKG_OBJECT_NONE, NULL, m->name, m->version,
+             PKG_MEASURE_FILES_CHECKED, m->nfiles, 1);
     for (i = 0; i < m->nfiles; i++) {
         const struct pkg_file *of = old ? find_file(old, m->files[i].path) : NULL;
-        counting(i, m->nfiles);
+        ev_count(i);
         if (m->files[i].config) {
             /* A configuration file: a person's version stays where it is. */
             if (of != NULL && file_state(root, of->path, of->digest, of->size) == 1)
@@ -1974,7 +2041,8 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
         }
 
     installed_free(&others);
-    did();
+    ev_count(m->nfiles);
+    ev_end(PKG_OUTCOME_OK);
     tr("%s %s: every file checked against the container, nothing in the way", m->name, m->version);
     if (dry_run) {
         /* Every check above has passed; say what would move, move nothing. */
@@ -2013,25 +2081,33 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
     sc.done = 0;
     for (i = 0, sc.todo = 0; i < m->nfiles; i++)
         if (keep[i] < 2) sc.todo++;
-    doing_things("writing", m->name, (long long)m->nfiles, "file");
+    ev_begin(PKG_PHASE_PREPARE, PKG_OBJECT_NONE, NULL, m->name, m->version,
+             PKG_MEASURE_FILES_WRITTEN, sc.todo, 1);
     if (pkg_read(f->pkg, f->pkg_len, stage_entry, &sc, &stopped) != PKG_OK) {
-        did();
         refuse_c(PKGRC_IO, "%s; nothing was changed", sc.err);
         pkg_fs_rmtree(staging);
         free(staging);
         free(keep);
         return 1;
     }
-    did();
+    ev_end(PKG_OUTCOME_OK);
 
     if (placement_save(root, m)) {
         pkg_fs_rmtree(staging); free(staging); free(keep); return 1;
     }
-    doing_things("placing", m->name, (long long)m->nfiles, "file");
-    for (i = 0; i < m->nfiles; i++) {
+    {
+        const struct placement *pl = placement_named(m->name);
+        unsigned long moving = 0;
+        if (pl != NULL && pl->fresh)
+            apply_touched = 1;           /* its destination is recorded */
+        for (i = 0; i < m->nfiles; i++)
+            if (keep[i] < 2) moving++;
+        ev_begin(PKG_PHASE_PLACE, PKG_OBJECT_NONE, NULL, m->name, m->version,
+                 PKG_MEASURE_FILES_PLACED, moving, 1);
+    }
+    for (i = 0, sc.done = 0; i < m->nfiles; i++) {
         char *from, *to;
         int good;
-        counting(i, m->nfiles);
         from = pkg_join(staging, m->files[i].path);
         to = installed_path(root, m->files[i].path);
         if (keep[i] == 2 || keep[i] == 3) {
@@ -2060,17 +2136,26 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
             free(keep);
             return 1;
         }
+        apply_touched = 1;
+        ev_count(++sc.done);
         if (!keep[i]) (*placed)++;
     }
-    did();
+    ev_end(PKG_OUTCOME_OK);
     free(keep);
 
     if (old != NULL) {
+        unsigned long going = 0, seen = 0;
+        for (i = 0; i < old->nfiles; i++)
+            if (find_file(m, old->files[i].path) == NULL) going++;
+        if (going)
+            ev_begin(PKG_PHASE_REMOVE, PKG_OBJECT_NONE, NULL, old->name, old->version,
+                     PKG_MEASURE_FILES_PROCESSED, going, 1);
         for (i = 0; i < old->nfiles; i++) {
             const struct pkg_file *of = &old->files[i];
             int s;
             if (find_file(m, of->path) != NULL)
                 continue;
+            ev_count(seen++);
             s = file_state(root, of->path, of->digest, of->size);
             if (s == 0) {
                 char *p = installed_path(root, of->path);
@@ -2085,6 +2170,10 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
                 else say_item("kept", "%s (edited, and no longer part of %s)", of->path, m->name);
             }
         }
+        if (going) {
+            ev_count(going);
+            ev_end(PKG_OUTCOME_OK);
+        }
     }
 
     /* The database entry is written last: it is what says the change is
@@ -2092,6 +2181,7 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
      * repeated finishes the change (the files already placed count as
      * placed). So the previous version and the pin go first: a cut can
      * leave them ahead of the database, never behind it. */
+    ev_begin(PKG_PHASE_RECORD, PKG_OBJECT_NONE, NULL, m->name, m->version, PKG_MEASURE_NONE, 0, 0);
     if (old != NULL) {
         /* "<old>" then "to <new> <verb>": until the database entry follows,
          * the record says which change is under way (readers of the first
@@ -2127,9 +2217,19 @@ static int apply(const char *root, const struct pkg_manifest *old, const struct 
     }
     free(dbp);
     apply_attrs(root, m);
+    ev_end(PKG_OUTCOME_OK);
     pkg_fs_rmtree(staging);
     free(staging);
     return 0;
+}
+
+/* The steps apply began and did not end, ended with its result. */
+static int apply(const char *root, const struct pkg_manifest *old, const struct fetched *f,
+                 unsigned long *placed, unsigned long *dropped, unsigned long *kept)
+{
+    int d = ev_depth();
+    apply_touched = 0;
+    return ev_unwind(d, apply_steps(root, old, f, placed, dropped, kept));
 }
 
 /* ---- dependencies ----------------------------------------------------- */
@@ -2358,16 +2458,20 @@ static int plan_one(struct plan *p, const char *name, const char *min, const cha
 }
 
 /* Remove a package's unchanged files and its records. Edited files stay. */
-int remove_files(const char *root, const struct pkg_manifest *m,
-                 size_t *removed, size_t *kept, size_t *gone, int report)
+static int remove_steps(const char *root, const struct pkg_manifest *m,
+                        size_t *removed, size_t *kept, size_t *gone, int report)
 {
     size_t i;
     int failed = 0;
     char *dbp, *pp;
     *removed = *kept = *gone = 0;
     if (placement_check(m)) return 1;
+    ev_begin(PKG_PHASE_REMOVE, PKG_OBJECT_NONE, NULL, m->name, m->version,
+             PKG_MEASURE_FILES_PROCESSED, m->nfiles, 1);
     for (i = 0; i < m->nfiles; i++) {
-        int s = file_state(root, m->files[i].path, m->files[i].digest, m->files[i].size);
+        int s;
+        ev_count(i);
+        s = file_state(root, m->files[i].path, m->files[i].digest, m->files[i].size);
         if (s == 0 && dry_run) {
             (*removed)++;
         } else if (s == 0) {
@@ -2394,8 +2498,11 @@ int remove_files(const char *root, const struct pkg_manifest *m,
             (*gone)++;
         }
     }
+    ev_count(m->nfiles);
     if (dry_run) return 0;
     if (failed) return refuse_c(17, "some files of %s could not be removed; its database and placement records were kept", m->name);
+    ev_end(PKG_OUTCOME_OK);
+    ev_begin(PKG_PHASE_RECORD, PKG_OBJECT_NONE, NULL, m->name, m->version, PKG_MEASURE_NONE, 0, 0);
     dbp = root_path(root, "db", m->name);
     if (dbp == NULL || pkg_fs_unlink(dbp) != 0) {
         free(dbp);
@@ -2423,6 +2530,13 @@ int remove_files(const char *root, const struct pkg_manifest *m,
     return 0;
 }
 
+int remove_files(const char *root, const struct pkg_manifest *m,
+                 size_t *removed, size_t *kept, size_t *gone, int report)
+{
+    int d = ev_depth();
+    return ev_unwind(d, remove_steps(root, m, removed, kept, gone, report));
+}
+
 /* Carry out a plan. The last entry is the named package, moved from `cur`
  * (NULL for a fresh install); the others are new dependencies. A failure
  * takes the dependencies this run placed back out. */
@@ -2443,18 +2557,47 @@ int run_plan(struct plan *p, const struct pkg_manifest *cur,
         free(kp);
         snprintf(when, sizeof when, "before placing %s %s%s", p->f[i].m.name, p->f[i].m.version,
                  i > 0 ? "; what this operation had placed was taken back out" : "");
+        apply_touched = 0;
         if (cancelled(when) || apply(p->root, last ? cur : NULL, &p->f[i], &pl, &dr, &ke) != 0) {
+            /* The package refused while being placed stays as far as it got:
+             * the same operation repeated finishes it. Said, not hidden. */
+            if (!dry_run && apply_touched)
+                ev_restored(PKG_RESTORE_INCOMPLETE);
             /* Undo in reverse: files, records, and the keys this operation
-             * pinned, so the root is as it was. */
-            while (!dry_run && i-- > 0) {
-                size_t r, k, g;
-                remove_files(p->root, &p->f[i].m, &r, &k, &g, 0);
-                if (!had_pin[i]) {
-                    char *pin = root_path(p->root, "keys", p->f[i].m.name);
-                    if (pin != NULL) pkg_fs_unlink(pin);
-                    free(pin);
+             * pinned, so the root is as it was. Each step can fail, and a
+             * failure is reported as one, never as the root put back. */
+            if (!dry_run && i > 0) {
+                size_t back = 0, n = i;
+                int failed = 0, q = quiet;
+                char why[sizeof quiet_reason];
+                snprintf(why, sizeof why, "%s", quiet_reason);
+                ev_begin(PKG_PHASE_RESTORE, PKG_OBJECT_ROOT, p->root, NULL, NULL,
+                         PKG_MEASURE_PACKAGES_RESTORED, n, 1);
+                quiet = 1;               /* the refusal stays the one that stopped the change */
+                while (i-- > 0) {
+                    size_t r, k, g;
+                    int ok;
+                    quiet_reason[0] = '\0';
+                    ok = remove_files(p->root, &p->f[i].m, &r, &k, &g, 0) == 0;
+                    if (ok && !had_pin[i]) {
+                        char *pin = root_path(p->root, "keys", p->f[i].m.name);
+                        ok = pin != NULL && pkg_fs_unlink(pin) == 0;
+                        free(pin);
+                    }
+                    if (ok) {
+                        tr("took %s %s back out", p->f[i].m.name, p->f[i].m.version);
+                        ev_count(++back);
+                    } else {
+                        failed = 1;
+                        warn("%s %s, placed by this operation, could not be taken back out: %s",
+                             p->f[i].m.name, p->f[i].m.version,
+                             quiet_reason[0] ? quiet_reason : "its pinned key could not be removed");
+                    }
                 }
-                tr("took %s %s back out", p->f[i].m.name, p->f[i].m.version);
+                quiet = q;
+                snprintf(quiet_reason, sizeof quiet_reason, "%s", why);
+                ev_end(failed ? PKG_OUTCOME_FAILED : PKG_OUTCOME_OK);
+                ev_restored(failed ? PKG_RESTORE_FAILED : PKG_RESTORE_DONE);
             }
             free(had_pin);
             return 1;

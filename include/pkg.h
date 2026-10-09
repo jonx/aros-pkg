@@ -128,6 +128,8 @@ enum {
     PKG_RC_USAGE      = 20   /* the request is wrong */
 };
 
+struct pkg_event;
+
 /* Every callback runs on the thread that called the operation, before the
  * operation returns. The strings it receives are valid only during the
  * callback: copy what you keep. Any callback may be NULL; with structured
@@ -153,7 +155,9 @@ struct pkg_sink {
      * files, records and the keys it pinned alike. It is asked once per
      * package while resolving, once before each package is placed, once
      * per entry while SHOW checks a channel, and once per package while
-     * STATUS compares; placing one package's files is not interrupted. */
+     * STATUS compares; placing one package's files is not interrupted.
+     * With `event`, the step open then ends CANCELLED, the taking back is a
+     * RESTORE step that can itself fail, and OP_END says both. */
     int  (*cancel)(void *user);
     /* Non-zero when a person watches: long steps then show a counter, a line
      * of `text` that starts with '\r' and is rewritten in place. A caller
@@ -168,6 +172,13 @@ struct pkg_sink {
      * PKG_LINE_END, so the front end can size the columns. `is_error`
      * follows `text`: non-zero for a refusal, its next step and a warning. */
     void (*line)(void *user, int kind, int is_error, const char *text);
+    /* Optional: what the operation is doing, as typed facts, in either form
+     * and whatever `progress` says. See "Progress events" below. */
+    void (*event)(void *user, const struct pkg_event *e);
+    /* Optional: milliseconds from a clock that never goes back, used only to
+     * space out STEP_PROGRESS events. NULL uses the host's monotonic clock;
+     * a test passes its own to need no sleep. */
+    long long (*clock)(void *user);
 };
 
 /* The role of a line handed to pkg_sink.line. */
@@ -190,6 +201,199 @@ enum pkg_line {
                            one line a person must read before typing: it carries
                            its own choices, as in "... ? [y/N]" */
 };
+
+/* ---- Progress events --------------------------------------------------- *
+ *
+ * pkg_sink.event receives what an operation is doing as facts a front end
+ * can show without reading a sentence: the operation begins, steps begin,
+ * advance, wait and end, and the operation ends. docs/events.md has the
+ * sequences each verb produces and an example of a sink that queues them
+ * for a UI thread.
+ *
+ * Order. For every call through this interface that is given a sink with
+ * `event`, OP_BEGIN comes first, before any work, and exactly one OP_END
+ * comes last, before the call returns: also for a refused request (20), a
+ * refusal, a cancel and a failure. Between them, steps nest: a step that
+ * begins while another is open has it as `parent`, and ends before it. Every
+ * step that begins ends, with the outcome it really had.
+ *
+ * Identity. `op` numbers the operations of the process from 1. `step`
+ * numbers the steps of one operation from 1, never reused within it; a step
+ * is (op, step). `attempt` is 1, or more when the same work starts again
+ * from the beginning (a download that restarted): the earlier attempt ends
+ * RETRIED and a new step begins, so a counter never goes back within a step.
+ *
+ * Counters. `done` and `total` are 64 bits, absolute, in the step's `unit`,
+ * counting what `measure` says and nothing else. `done` never decreases
+ * within a step. `total` is meaningful only when `total_known` is non-zero;
+ * a known total of 0 is an empty file, not an unknown one. A total may
+ * become known during a step (a STEP_PROGRESS says so at once); a total
+ * that turns out wrong becomes unknown for the rest of the step, never a
+ * share above 100%. The library gives facts per step, not a percentage of
+ * the whole operation: placing the files is not the end of an install, the
+ * records, the attributes and the write-back to the medium follow.
+ *
+ * Pace. STEP_BEGIN, STEP_WAIT, STEP_END and the operation events are never
+ * held back. STEP_PROGRESS is sent at most once per PKG_EVENT_GAP_MS of
+ * pkg_sink.clock per step, except when a total becomes known or is found
+ * wrong; STEP_END carries the last counters. A wait is said once, when it
+ * begins (wait set), and once when work comes back (wait PKG_WAIT_NONE);
+ * nothing is sent while nothing happens: the front end animates its own
+ * indeterminate indicator.
+ *
+ * Lifetime. The event and every string in it are lent for the length of the
+ * callback; copy what you keep. The callback runs on the operation's thread,
+ * synchronously, as every callback here. It must not call a libpkg operation:
+ * such a call returns PKG_RC_USAGE at once, touching nothing, with an
+ * OP_BEGIN and OP_END of its own when its sink has `event`. The event is not
+ * a way to stop the operation: that is `cancel`.
+ *
+ * Privacy. `object` names a file, an archive, a channel's object or a host,
+ * never a user name, password, query string or fragment of a URL.
+ *
+ * Without `event` nothing is built, and the results and text are the same
+ * as with it. The `size` field is sizeof(struct pkg_event) as the library
+ * was built; fields are only ever added at the end. */
+
+#define PKG_EVENT_GAP_MS 100
+
+enum pkg_event_type {
+    PKG_EVENT_OP_BEGIN = 1,   /* verb, dryrun */
+    PKG_EVENT_STEP_BEGIN,     /* step, parent, attempt, phase, what it acts on, unit,
+                                 measure, done (0), total if known */
+    PKG_EVENT_STEP_PROGRESS,  /* step, done, total, total_known */
+    PKG_EVENT_STEP_WAIT,      /* step, wait, object (the host); counters unchanged */
+    PKG_EVENT_STEP_END,       /* step, final done and total, outcome, code */
+    PKG_EVENT_OP_END          /* code, outcome, restore, cancel */
+};
+
+/* What a step does. A phase that does not run is not announced: a dry run
+ * has no PREPARE, PLACE, RECORD or FLUSH, a local channel no download. */
+enum pkg_phase {
+    PKG_PHASE_NONE = 0,   /* operation events */
+    PKG_PHASE_RESOLVE,    /* channels read, a version picked, dependencies planned; the
+                             FETCH and VERIFY steps of every package nest in it */
+    PKG_PHASE_FETCH,      /* an object downloaded, or a payload or archive read */
+    PKG_PHASE_VERIFY,     /* bytes or files checked against what was signed */
+    PKG_PHASE_INSPECT,    /* the root's files compared with what is recorded or coming */
+    PKG_PHASE_PREPARE,    /* files written to staging; for PUSH, a file hashed */
+    PKG_PHASE_PLACE,      /* files put in their place in the root */
+    PKG_PHASE_REMOVE,     /* files taken out of the root */
+    PKG_PHASE_RECORD,     /* the database entry, the pinned key, the previous version
+                             and the files' attributes written */
+    PKG_PHASE_RESTORE,    /* what this operation placed, taken back out after a refusal
+                             or a cancel */
+    PKG_PHASE_FLUSH,      /* the root's changes written back to its medium */
+    PKG_PHASE_UPLOAD      /* PUSH: files sent to the portal */
+};
+
+enum pkg_unit {
+    PKG_UNIT_NONE = 0,    /* nothing is counted: the step begins and ends */
+    PKG_UNIT_BYTES,
+    PKG_UNIT_FILES,
+    PKG_UNIT_ENTRIES,     /* versions in a channel */
+    PKG_UNIT_PACKAGES
+};
+
+/* What `done` counts. One measure per step: compressed and uncompressed
+ * bytes are never mixed, nor bytes read with bytes verified. */
+enum pkg_measure {
+    PKG_MEASURE_NONE = 0,
+    PKG_MEASURE_BYTES_TRANSFERRED, /* FETCH: body bytes received from the network */
+    PKG_MEASURE_BYTES_READ,        /* FETCH: bytes of a local file read as stored; for an
+                                      archive, its compressed bytes */
+    PKG_MEASURE_BYTES_VERIFIED,    /* VERIFY: bytes hashed against a signed digest */
+    PKG_MEASURE_BYTES_HASHED,      /* PREPARE (PUSH): bytes hashed to name a file */
+    PKG_MEASURE_BYTES_SENT,        /* UPLOAD: bytes the portal acknowledged */
+    PKG_MEASURE_FILES_VERIFIED,    /* VERIFY: payload files checked against the manifest */
+    PKG_MEASURE_FILES_CHECKED,     /* INSPECT: root files compared, each read and hashed */
+    PKG_MEASURE_FILES_WRITTEN,     /* PREPARE, PLACE (REPAIR): files written */
+    PKG_MEASURE_FILES_PLACED,      /* PLACE: files moved into place */
+    PKG_MEASURE_FILES_PROCESSED,   /* REMOVE: files dealt with, whether removed, kept as
+                                      edited or found already gone */
+    PKG_MEASURE_FILES_SENT,        /* UPLOAD: files the portal took */
+    PKG_MEASURE_ENTRIES_CHECKED,   /* VERIFY (SHOW): channel entries checked */
+    PKG_MEASURE_PACKAGES_RESTORED  /* RESTORE: packages taken back out */
+};
+
+/* What `object` names. */
+enum pkg_object {
+    PKG_OBJECT_NONE = 0,
+    PKG_OBJECT_INDEX,     /* a channel's index */
+    PKG_OBJECT_MANIFEST,
+    PKG_OBJECT_SIGNATURE,
+    PKG_OBJECT_PAYLOAD,
+    PKG_OBJECT_ARCHIVE,   /* a source archive, by its file name */
+    PKG_OBJECT_CHANNEL,   /* a channel, by its last path component */
+    PKG_OBJECT_FILE,      /* any other file, by its name */
+    PKG_OBJECT_ROOT,      /* the root, as given */
+    PKG_OBJECT_HOST       /* STEP_WAIT: the machine waited for */
+};
+
+enum pkg_wait {
+    PKG_WAIT_NONE = 0,    /* the wait is over: the step works again */
+    PKG_WAIT_NETWORK,     /* finding a host, connecting, a TLS handshake, the first byte */
+    PKG_WAIT_OTHER
+};
+
+enum pkg_outcome {
+    PKG_OUTCOME_NONE = 0, /* not an end */
+    PKG_OUTCOME_OK,
+    PKG_OUTCOME_FAILED,   /* refused or failed; `code` has the class */
+    PKG_OUTCOME_CANCELLED,/* the caller's cancel stopped it at a boundary */
+    PKG_OUTCOME_RETRIED,  /* the work started again: a step with attempt + 1 follows */
+    PKG_OUTCOME_ABSENT,   /* FETCH: the object is not published there, which is not an
+                             error by itself (a channel with no withdrawals) */
+    PKG_OUTCOME_ABANDONED /* the operation ended with the step open; never expected */
+};
+
+/* OP_END: whether what the operation changed was taken back. */
+enum pkg_restore {
+    PKG_RESTORE_NONE = 0,  /* nothing was left to take back: success, a dry run, or a
+                              refusal before anything was placed */
+    PKG_RESTORE_DONE,      /* every package this operation placed was taken back out */
+    PKG_RESTORE_FAILED,    /* taking back was tried and left something in place */
+    PKG_RESTORE_INCOMPLETE /* a package was left partly placed and was not taken back;
+                              the same operation repeated finishes it */
+};
+
+struct pkg_event {
+    unsigned size;            /* sizeof(struct pkg_event) as the library was built */
+    int type;                 /* PKG_EVENT_* */
+    unsigned long op;         /* the operation, from 1 in this process */
+    const char *verb;         /* "install", "upgrade", ... */
+    int dryrun;               /* the operation writes nothing */
+    unsigned long step;       /* the step, from 1 in this operation; 0 for OP_* */
+    unsigned long parent;     /* the step it is part of, 0 for none */
+    unsigned attempt;         /* 1, or more for the same work started again */
+    int phase;                /* PKG_PHASE_* */
+    const char *package;      /* the package acted on, or NULL */
+    const char *version;      /* its version, or NULL */
+    int object_kind;          /* PKG_OBJECT_* */
+    const char *object;       /* what is read, written or waited for, or NULL */
+    int unit;                 /* PKG_UNIT_* */
+    int measure;              /* PKG_MEASURE_* */
+    unsigned long long done;
+    unsigned long long total;
+    int total_known;
+    int wait;                 /* STEP_WAIT: PKG_WAIT_* */
+    int outcome;              /* STEP_END, OP_END: PKG_OUTCOME_* */
+    int code;                 /* OP_END: what the call returns. STEP_END failed: the
+                                 class of the operation's first refusal */
+    int restore;              /* OP_END: PKG_RESTORE_* */
+    int cancel;               /* OP_END: the caller's cancel stopped the operation */
+};
+
+/* Names for logs and tests, "fetch", "bytes-read", "failed"...; "unknown"
+ * for a value this library does not know. */
+const char *pkg_event_name(int type);
+const char *pkg_phase_name(int phase);
+const char *pkg_unit_name(int unit);
+const char *pkg_measure_name(int measure);
+const char *pkg_object_name(int kind);
+const char *pkg_wait_name(int wait);
+const char *pkg_outcome_name(int outcome);
+const char *pkg_restore_name(int restore);
 
 /* Every option any operation takes; each operation reads the ones it needs
  * and ignores the rest. Strings are borrowed for the length of the call. */

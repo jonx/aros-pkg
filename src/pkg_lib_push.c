@@ -64,33 +64,33 @@ static int push_collect(const char *rel, void *ctx)
     return pl->rel[pl->n++] ? 0 : -1;
 }
 
+/* A file hashed to be named, as a PREPARE step against its size. */
+static void hash_step(const char *path, const char *rel)
+{
+    struct pkg_fs_id id;
+    char name[120];
+    short_name(name, sizeof name, rel);
+    ev_begin(PKG_PHASE_PREPARE, PKG_OBJECT_FILE, name, NULL, NULL, PKG_MEASURE_BYTES_HASHED, 0, 0);
+    if (path != NULL && pkg_fs_identity(path, &id) == 0 && id.exists)
+        ev_total(id.size);
+}
+
 /* sha256 and size of a file read in pieces: an archive is large. */
-int file_digest(const char *path, char hex[PKG_SHA256_HEXLEN + 1], unsigned long long *size)
+int file_digest(const char *path, char hex[PKG_SHA256_HEXLEN + 1], unsigned long long *size,
+                int counted)
 {
     FILE *f = fopen(path, "rb");
     unsigned char buf[65536], dg[PKG_SHA256_LEN];
     struct pkg_sha256 c;
-    long long whole = 0;
     size_t n, k;
     if (f == NULL) return -1;
-    if (fseek(f, 0, SEEK_END) == 0) {
-        long t = ftell(f);
-        if (t > 0) whole = t;
-    }
-    rewind(f);
     pkg_sha256_init(&c);
     *size = 0;
-    {
-        char shown[120];
-        short_name(shown, sizeof shown, path);
-        doing_bytes("hashing", shown, whole);
-    }
     while ((n = fread(buf, 1, sizeof buf, f)) > 0) {
         pkg_sha256_update(&c, buf, n);
         *size += n;
-        pkg_activity_bytes((long long)*size, whole);
+        if (counted) ev_count(*size);
     }
-    did();
     fclose(f);
     pkg_sha256_final(&c, dg);
     for (k = 0; k < PKG_SHA256_LEN; k++) snprintf(hex + 2 * k, 3, "%02x", dg[k]);
@@ -185,7 +185,7 @@ static int push_send(struct push_auth *pa, const char *method, const char *url, 
         unsigned long long size;
         const char *path = strstr(url, "://");
         path = path ? strchr(path + 3, '/') : NULL;
-        if (path == NULL || file_digest(body, digest, &size) != 0) {
+        if (path == NULL || file_digest(body, digest, &size, 0) != 0) {
             snprintf(err, errlen, "cannot read %s to sign the request", body);
             return -1;
         }
@@ -310,7 +310,11 @@ static int cmd_push(const struct pkg_options *a)
     for (i = 0; i < pl.n; i++) {
         char hex[PKG_SHA256_HEXLEN + 1], *full = pkg_join(a->channel, pl.rel[i]);
         unsigned long long size;
-        if (full == NULL || file_digest(full, hex, &size) != 0) {
+        int hashed;
+        hash_step(full, pl.rel[i]);
+        hashed = full != NULL && file_digest(full, hex, &size, 1) == 0;
+        ev_end(hashed ? PKG_OUTCOME_OK : PKG_OUTCOME_FAILED);
+        if (!hashed) {
             free(full); fclose(f);
             refuse_c(17, "cannot read %s", pl.rel[i]);
             goto out;
@@ -354,20 +358,23 @@ static int cmd_push(const struct pkg_options *a)
             p2 = nl ? nl + 1 : end;
         }
         free(ans);
+        /* every file the portal needs, each a step of its own in bytes it acknowledged */
+        ev_begin(PKG_PHASE_UPLOAD, PKG_OBJECT_CHANNEL, chan_label(a->channel), NULL, NULL,
+                 PKG_MEASURE_FILES_SENT, nneed, 1);
         for (i = 0; i < nneed; i++) {
             char *full = pkg_join(a->channel, need[i]), hex[PKG_SHA256_HEXLEN + 1], result[64], rec[64];
             char shown[120];
             unsigned long long size = 0, off = 0;
             int ok_file = 0;
-            if (!push_path_ok(need[i]) || full == NULL || file_digest(full, hex, &size) != 0) {
+            if (!push_path_ok(need[i]) || full == NULL || file_digest(full, hex, &size, 0) != 0) {
                 warn("the portal asked for %s, which this channel does not send", need[i]);
                 free(full);
                 continue;
             }
             snprintf(url, sizeof url, "%s/_push/files/%s", base, need[i]);
             short_name(shown, sizeof shown, need[i]);
-            doing("uploading", shown);
-            counting(i, nneed);
+            ev_begin(PKG_PHASE_UPLOAD, PKG_OBJECT_FILE, shown, NULL, NULL, PKG_MEASURE_BYTES_SENT,
+                     size, 1);
             if (size <= partsz) {
                 if (push_send(&pa, "PUT", url, full, NULL, out, &code, err, sizeof err) == 0 && code == 200
                     && answer_field(out, "result", result, sizeof result)
@@ -376,10 +383,8 @@ static int cmd_push(const struct pkg_options *a)
             } else {
                 /* in parts, each resuming where the portal says it got to */
                 FILE *src = fopen(full, "rb");
-                unsigned long long parts = (size + partsz - 1) / partsz;
                 while (src != NULL && off < size) {
                     unsigned long long end2 = off + partsz < size ? off + partsz : size;
-                    pkg_activity_count(off / partsz + 1, parts, "parts");
                     FILE *pf = fopen(part, "wb");
                     char buf[65536], ph[2600];
                     unsigned long long left = end2 - off;
@@ -400,24 +405,31 @@ static int cmd_push(const struct pkg_options *a)
                     if (strcmp(result, "partial") != 0 || answer_field(out, "received", rec, sizeof rec) == NULL)
                         break;
                     off = strtoull(rec, NULL, 10);         /* the portal's count, so a resume skips */
+                    ev_count(off);
                 }
                 if (src) fclose(src);
             }
-            did();
             if (!ok_file) {
                 char why[600];
                 refuse_c(17, "the portal did not take %s: %s", need[i],
                          answer_field(out, "reason", why, sizeof why) ? why : code ? "an unexpected answer" : err);
+                ev_end(PKG_OUTCOME_FAILED);
+                ev_end(PKG_OUTCOME_FAILED);
                 for (; i < nneed; i++) free(need[i]);
                 free(need);
                 free(full);
                 goto out;
             }
+            ev_count(size);
+            ev_end(PKG_OUTCOME_OK);
+            ev_count(i + 1);
             sent++;
             sent_bytes += size;
             free(full);
             free(need[i]);
         }
+        ev_count(nneed);
+        ev_end(PKG_OUTCOME_OK);
         free(need);
     }
 

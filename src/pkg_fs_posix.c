@@ -407,11 +407,18 @@ void (*pkg_fs_on_transfer)(long long done, long long total);
 void (*pkg_fs_on_wait)(const char *host);
 void (*pkg_fs_on_tick)(void);
 
-/* Milliseconds, for the activity line's pace and for the trace's own account
- * of where a request's time went. Only differences are used. */
+/* Milliseconds, for the activity line's pace, the progress events' and the
+ * trace's own account of where a request's time went. Only differences are
+ * used, so a clock that never goes back is taken where the system has one:
+ * a change of the time of day must not hold an event back or rush one. */
 long long pkg_fs_now_ms(void)
 {
     struct timeval tv;
+#if defined(CLOCK_MONOTONIC) && !defined(__AROS__)
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
+        return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
     if (gettimeofday(&tv, NULL) != 0)
         return 0;
     return (long long)tv.tv_sec * 1000 + tv.tv_usec / 1000;
@@ -1950,11 +1957,14 @@ static int http_get_once(const char *url, int tls, int fd, char *location, size_
         snprintf(err, errlen, "cannot send to %s", host);
         return -1;
     }
-    /* the head, up to the blank line */
+    /* the head, up to the blank line: until it comes, the server is what
+     * is waited for, and that is said once */
+    waiting(host);
     for (;;) {
-        if (hlen + 1 >= sizeof head) { conn_drop(c); snprintf(err, errlen, "an oversized reply from %s", host); return -1; }
+        if (hlen + 1 >= sizeof head) { waiting(NULL); conn_drop(c); snprintf(err, errlen, "an oversized reply from %s", host); return -1; }
         n = conn_read(c, head + hlen, sizeof head - 1 - hlen);
         if (n <= 0) {
+            waiting(NULL);
             conn_drop(c);
             if (reused && hlen == 0) return 4;   /* the server had closed it: send it again */
             snprintf(err, errlen, "%s closed the connection early", host);
@@ -1964,6 +1974,7 @@ static int http_get_once(const char *url, int tls, int fd, char *location, size_
         head[hlen] = '\0';
         if ((hdrend = strstr(head, "\r\n\r\n")) != NULL) { hdrend += 4; break; }
     }
+    waiting(NULL);
     /* what came in after the head belongs to the body, and to the next
      * response after that: put it back in front of the connection's buffer */
     {

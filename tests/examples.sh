@@ -2,15 +2,17 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 John Knipper
 #
-# The examples are run as tests: examples/basic.c end to end, and
+# The examples are run as tests: examples/basic.c end to end,
 # examples/browse.c against a channel with an image and its dependency,
-# through a listing, an install, a typo, a cancel and a damaged entry.
+# through a listing, an install, a typo, a cancel and a damaged entry, and
+# examples/events.c, an install and an upgrade on a worker thread whose
+# events a UI thread shows.
 
 set -u
 PKG=${PKG:-./build/pkg}
 B=./build
-for need in "$PKG" "$B/example-basic" "$B/example-browse"; do
-    [ -x "$need" ] || { echo "examples: missing $need (make build/pkg build/example-basic build/example-browse)" >&2; exit 69; }
+for need in "$PKG" "$B/example-basic" "$B/example-browse" "$B/example-events"; do
+    [ -x "$need" ] || { echo "examples: missing $need (make build/pkg build/example-basic build/example-browse build/example-events)" >&2; exit 69; }
 done
 T=$(mktemp -d "${TMPDIR:-/tmp}/pkg-examples.XXXXXX")
 trap 'rm -rf "$T"' EXIT
@@ -47,6 +49,12 @@ PKG_BROWSE_TRACE=1 $B/example-browse install happ "$T/channel" "$T/root2" 4 > "$
     && [ ! -e "$T/root2/.pkg/keys/hlib" ];            ok $? "Cancel after hlib is placed leaves neither hlib nor its pinned key"
 $B/example-browse list "$T/tampered" > "$T/l3" 2>&1
 [ $? -eq 12 ] && has "$T/l3" 'integrity';           ok $? "a damaged entry is shown as such, and the exit code says so"
+
+$B/example-events "$T/events" > "$T/ev" 2>&1
+[ $? -eq 0 ] && has "$T/ev" '^install (operation' && has "$T/ev" '^install: ok, code 0' \
+    && has "$T/ev" '^upgrade: ok, code 0' && has "$T/ev" 'place hello 1.1' && has "$T/ev" 'ok: 1 files' \
+    && has "$T/ev" '^returned 0 and 0'
+                                                      ok $? "events: a worker's events reach the UI thread, in order, begin to end"
 
 echo "examples: $checks checks, $fails failures"
 [ "$fails" -eq 0 ]

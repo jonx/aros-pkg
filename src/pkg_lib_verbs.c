@@ -281,15 +281,16 @@ int cmd_show(const struct pkg_options *a)
     /* 1. Each entry: manifest against the index, signature, withdrawal, and
      *    the payload of a .pkg package. */
     show_defers_archives = 1;
-    doing_things("checking", chan_label(a->channel), (long long)ix.n, "version");
+    ev_begin(PKG_PHASE_VERIFY, PKG_OBJECT_CHANNEL, chan_label(a->channel), NULL, NULL,
+             PKG_MEASURE_ENTRIES_CHECKED, ix.n, 1);
     for (i = 0; i < ix.n; i++) {
         struct show_row *r = &row[i];
+        ev_count(i);
         if (a->target != NULL && strcmp(ix.e[i].name, a->target) != 0)
             continue;
-        counting(i, ix.n);
         if (cancelled("while checking the channel, which was not changed")) {
             show_defers_archives = 0;
-            did();
+            ev_end(PKG_OUTCOME_FAILED);
             for (i = 0; i < ix.n; i++) if (row[i].selected) fetched_free(&row[i].f);
             free(row); free(ix.e);
             return 1;
@@ -314,7 +315,8 @@ int cmd_show(const struct pkg_options *a)
             }
         }
     }
-    did();
+    ev_count(ix.n);
+    ev_end(PKG_OUTCOME_OK);
     show_defers_archives = 0;
 
     /* 2. Each archive once: every file of every entry that names it. */
@@ -381,10 +383,16 @@ int cmd_show(const struct pkg_options *a)
                 tr("%s is published upstream and not downloaded here: not read", an);
             } else if (path == NULL || !pkg_fs_exists(path)) {
                 for (fl = 0; fl < n; fl++) ac.ex[fl].seen = 3;
-            } else if (doing("reading", "the archive"),
-                       rc = pkg_archive_walk(path, ac_want, ac_data, &ac, err, sizeof err),
-                       did(), rc != 0) {
-                for (fl = 0; fl < n; fl++) if (ac.ex[fl].seen == 0) ac.ex[fl].seen = 4;
+            } else {
+                struct pkg_fs_id id;
+                ev_begin(PKG_PHASE_FETCH, PKG_OBJECT_ARCHIVE, an, NULL, NULL,
+                         PKG_MEASURE_BYTES_READ, 0, 0);
+                if (pkg_fs_identity(path, &id) == 0 && id.exists)
+                    ev_total(id.size);
+                rc = pkg_archive_walk(path, ac_want, ac_data, &ac, err, sizeof err);
+                ev_end(rc == 0 ? PKG_OUTCOME_OK : PKG_OUTCOME_FAILED);
+                if (rc != 0)
+                    for (fl = 0; fl < n; fl++) if (ac.ex[fl].seen == 0) ac.ex[fl].seen = 4;
             }
             for (fl = 0; fl < n; fl++) {
                 struct show_row *r = &row[ac.ex[fl].row];
@@ -1162,10 +1170,18 @@ static int need_root_channel(const struct pkg_options *a)
     return 0;
 }
 
+/* Resolution ends, done, once every package of the plan is fetched and
+ * verified: what follows changes the root. True, to sit in a condition. */
+static int resolved(void)
+{
+    ev_end_phase(PKG_PHASE_RESOLVE, PKG_OUTCOME_OK);
+    return 1;
+}
+
 /* One package. `line` is NULL for INSTALL <name>, which reports for itself;
  * with several names the batch reports instead, and this leaves its sentence
  * there. */
-static int install_one(const struct pkg_options *a, const char *target, char *line, size_t ll)
+static int install_steps(const struct pkg_options *a, const char *target, char *line, size_t ll)
 {
     struct index ix;
     const struct entry *e;
@@ -1176,6 +1192,7 @@ static int install_one(const struct pkg_options *a, const char *target, char *li
     int rc = 1;
 
     if (need_root_channel(a) != 0) return 1;
+    ev_begin(PKG_PHASE_RESOLVE, PKG_OBJECT_NONE, NULL, target, a->version, PKG_MEASURE_NONE, 0, 0);
     if (resolve_arch(a) != 0) return 1;
     if (open_channels(a, &ix) != 0) return 1;
     {
@@ -1242,7 +1259,7 @@ static int install_one(const struct pkg_options *a, const char *target, char *li
         return 1;
     }
     if (plan_target(&p, a, &ix, e->name, e->version) == 0
-        && placement_prepare(a->root, &p.f[p.n - 1].m) == 0
+        && placement_prepare(a->root, &p.f[p.n - 1].m) == 0 && resolved()
         && run_plan(&p, NULL, &placed, &dropped, &kept) == 0) {
         const struct fetched *t = &p.f[p.n - 1];
         struct fetched f = *t;
@@ -1283,6 +1300,12 @@ static int install_one(const struct pkg_options *a, const char *target, char *li
     plan_free(&p);
     free(ix.e);
     return rc;
+}
+
+static int install_one(const struct pkg_options *a, const char *target, char *line, size_t ll)
+{
+    int d = ev_depth();
+    return ev_unwind(d, install_steps(a, target, line, ll));
 }
 
 
@@ -1394,7 +1417,7 @@ static int move_to(const struct pkg_options *a, const struct index *ix, const st
     unsigned long placed, dropped, kept;
     int rc = 1;
 
-    if (plan_target(&p, a, ix, e->name, e->version) == 0
+    if (plan_target(&p, a, ix, e->name, e->version) == 0 && resolved()
         && run_plan(&p, cur, &placed, &dropped, &kept) == 0) {
         struct fetched f = p.f[p.n - 1];
         kv("result", "%s", verb[0] == 'u' ? res("upgraded", "would-upgrade")
@@ -1427,15 +1450,15 @@ static int move_to(const struct pkg_options *a, const struct index *ix, const st
     return rc;
 }
 
-int cmd_upgrade(const struct pkg_options *a)
+static int upgrade_steps(const struct pkg_options *a)
 {
     struct index ix;
     const struct entry *e;
     struct pkg_manifest cur;
     int rc = 1, c;
 
-    if (a->all) return upgrade_all(a);
     if (need_root_channel(a) != 0) return 1;
+    ev_begin(PKG_PHASE_RESOLVE, PKG_OBJECT_NONE, NULL, a->target, a->version, PKG_MEASURE_NONE, 0, 0);
     if (resolve_arch(a) != 0) return 1;
     if (load_installed(a->root, a->target, &cur, 0) != 0) return 1;
     if (target_arch == NULL && strcmp(cur.architecture, "generic") != 0)
@@ -1479,7 +1502,14 @@ out:
     return rc;
 }
 
-int cmd_rollback(const struct pkg_options *a)
+int cmd_upgrade(const struct pkg_options *a)
+{
+    int d = ev_depth();
+    if (a->all) return ev_unwind(d, upgrade_all(a));
+    return ev_unwind(d, upgrade_steps(a));
+}
+
+static int rollback_steps(const struct pkg_options *a)
 {
     struct pkg_manifest cur;
     struct index ix;
@@ -1491,6 +1521,7 @@ int cmd_rollback(const struct pkg_options *a)
     int rc = 1;
 
     if (need_root_channel(a) != 0) return 1;
+    ev_begin(PKG_PHASE_RESOLVE, PKG_OBJECT_NONE, NULL, a->target, NULL, PKG_MEASURE_NONE, 0, 0);
     if (resolve_arch(a) != 0) return 1;
     if (load_installed(a->root, a->target, &cur, 0) != 0) return 1;
     if (target_arch == NULL && strcmp(cur.architecture, "generic") != 0)
@@ -1550,6 +1581,12 @@ int cmd_rollback(const struct pkg_options *a)
     pkg_manifest_free(&cur);
     free(ix.e);
     return rc;
+}
+
+int cmd_rollback(const struct pkg_options *a)
+{
+    int d = ev_depth();
+    return ev_unwind(d, rollback_steps(a));
 }
 
 int cmd_list(const struct pkg_options *a)
@@ -1656,13 +1693,17 @@ static int verify_all(const struct pkg_options *a)
         unsigned char *state = (unsigned char *)calloc(m->nfiles ? m->nfiles : 1, 1);
         if (state == NULL) { installed_free(&in); return refuse_c(17, "out of memory"); }
         /* 1. every file's state, so the package's line can come first */
+        ev_begin(PKG_PHASE_INSPECT, PKG_OBJECT_NONE, NULL, m->name, m->version,
+                 PKG_MEASURE_FILES_CHECKED, m->nfiles, 1);
         for (i = 0; i < m->nfiles; i++) {
             int s = file_state(a->root, m->files[i].path, m->files[i].digest, m->files[i].size);
             state[i] = (unsigned char)s;
             if (s == 1 && m->files[i].config) pedited++;
             else if (s == 1) changed++;
             else if (s == 2) missing++;
+            ev_count(i + 1);
         }
+        ev_end(PKG_OUTCOME_OK);     /* the check was made; what it found is the answer's */
         edited += pedited;
         files += m->nfiles;
         /* 2. the package's line */
@@ -1737,8 +1778,11 @@ int cmd_verify(const struct pkg_options *a)
     kv("name", "%s", m.name);
     kv("version", "%s", m.version);
     kv("files", "%lu", (unsigned long)m.nfiles);
+    ev_begin(PKG_PHASE_INSPECT, PKG_OBJECT_NONE, NULL, m.name, m.version,
+             PKG_MEASURE_FILES_CHECKED, m.nfiles, 1);
     for (i = 0; i < m.nfiles; i++) {
         int s = file_state(a->root, m.files[i].path, m.files[i].digest, m.files[i].size);
+        ev_count(i + 1);
         if (s == 1 && m.files[i].config) {
             edited++;           /* a configuration file: editing it is what it is for */
             if (machine) kv("edited", "%s", m.files[i].path);
@@ -1751,6 +1795,7 @@ int cmd_verify(const struct pkg_options *a)
         if (s == 2)
             missing++;          /* reported below, once moved files are known */
     }
+    ev_end(PKG_OUTCOME_OK);     /* the check was made; what it found is the answer's */
     if (missing > 0) {
         unsigned char *miss = (unsigned char *)calloc(m.nfiles, 1);
         char **found = (char **)calloc(m.nfiles, sizeof *found);
@@ -1763,7 +1808,11 @@ int cmd_verify(const struct pkg_options *a)
                 miss[i] = file_state(a->root, m.files[i].path, m.files[i].digest,
                                      m.files[i].size) == 2;
             ms.root = a->root; ms.m = &m; ms.missing = miss; ms.found = found;
+            /* the whole root, for files moved by hand: nothing to count against */
+            ev_begin(PKG_PHASE_INSPECT, PKG_OBJECT_ROOT, a->root, m.name, m.version,
+                     PKG_MEASURE_NONE, 0, 0);
             pkg_fs_walk(a->root, moved_one, NULL, &ms, &skipped, err, sizeof err);
+            ev_end(PKG_OUTCOME_OK);
             for (i = 0; i < m.nfiles; i++)
                 if (found[i] != NULL) {
                     moved++;
@@ -1892,14 +1941,15 @@ static int repair_entry(const struct pkg_entry *e, void *ctx)
     free(to);
     attrs_one(c->root, pf);
     c->restored++;
+    ev_count(c->restored);
     if (machine) kv("restored", "%s", pf->path);
     else say_item("restored", "%s", pf->path);
     return 0;
 }
 
 /* One package: 0 intact or repaired, 1 refused (reason given). */
-int repair_one(const struct pkg_options *a, const struct index *ix, const char *name,
-               unsigned long *restored, unsigned long *aside)
+static int repair_steps(const struct pkg_options *a, const struct index *ix, const char *name,
+                        unsigned long *restored, unsigned long *aside)
 {
     struct pkg_manifest m;
     struct fetched f;
@@ -1912,13 +1962,17 @@ int repair_one(const struct pkg_options *a, const struct index *ix, const char *
     if (load_installed(a->root, name, &m, 0) != 0) return 1;
     c.need = calloc(m.nfiles ? m.nfiles : 1, 1);
     if (c.need == NULL) { pkg_manifest_free(&m); return refuse("out of memory"); }
+    ev_begin(PKG_PHASE_INSPECT, PKG_OBJECT_NONE, NULL, m.name, m.version,
+             PKG_MEASURE_FILES_CHECKED, m.nfiles, 1);
     for (i = 0; i < m.nfiles; i++) {
         int s = file_state(a->root, m.files[i].path, m.files[i].digest, m.files[i].size);
         if (s == 2 || (s == 1 && !m.files[i].config)) {
             c.need[i] = (unsigned char)(s == 2 ? 1 : 2);
             needed++;
         }
+        ev_count(i + 1);
     }
+    ev_end(PKG_OUTCOME_OK);
     if (needed == 0) {
         free(c.need);
         pkg_manifest_free(&m);
@@ -1956,8 +2010,11 @@ int repair_one(const struct pkg_options *a, const struct index *ix, const char *
         }
     }
     if (!dry_run) {
+        int unread;
         c.root = a->root; c.m = &m; c.restored = c.aside = c.left = 0; c.err[0] = '\0';
-        int unread = pkg_read(f.pkg, f.pkg_len, repair_entry, &c, &stopped) != PKG_OK;
+        ev_begin(PKG_PHASE_PLACE, PKG_OBJECT_NONE, NULL, m.name, m.version,
+                 PKG_MEASURE_FILES_WRITTEN, needed, 1);
+        unread = pkg_read(f.pkg, f.pkg_len, repair_entry, &c, &stopped) != PKG_OK;
         attrs_report(m.name);
         if (unread) {
             refuse_c(c.err[0] && strstr(c.err, "is not the file") ? 12 : 17, "%s %s: %s; %lu file%s "
@@ -1976,6 +2033,7 @@ int repair_one(const struct pkg_options *a, const struct index *ix, const char *
             fetched_free(&f);
             goto out;
         }
+        ev_end(PKG_OUTCOME_OK);
     } else {
         *restored = (unsigned long)needed;
     }
@@ -1985,4 +2043,11 @@ out:
     free(c.need);
     pkg_manifest_free(&m);
     return rc;
+}
+
+int repair_one(const struct pkg_options *a, const struct index *ix, const char *name,
+               unsigned long *restored, unsigned long *aside)
+{
+    int d = ev_depth();
+    return ev_unwind(d, repair_steps(a, ix, name, restored, aside));
 }
