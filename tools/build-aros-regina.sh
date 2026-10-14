@@ -29,6 +29,8 @@ aros_crosstools=${AROS_CROSSTOOLS:-"$HOME/aros-crosstools"}
 sdk=${PKG_AROS_SDK_ROOT:-"$aros_build/bin/darwin-aarch64"}
 build_tools=${PKG_AROS_BUILD_TOOLS_ROOT:-"$sdk/tools"}
 aros_target=${PKG_AROS_TARGET:-aarch64-unknown-aros}
+# The default is the hosted Darwin profile, which reserves x18. Native Apple
+# AROS leaves x18 to the compiler; its builder passes its own flags.
 aros_arch_flags=${PKG_AROS_ARCH_FLAGS:--mcmodel=large -ffixed-x18}
 aros_clang="$aros_crosstools/bin/clang"
 aros_cross_lib=${PKG_AROS_CROSS_LIB:-"$aros_crosstools/lib/generic"}
