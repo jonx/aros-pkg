@@ -1889,13 +1889,15 @@ char *beside(const char *path, const char *suffix)
 static int apply_touched;
 
 static int apply_steps(const char *root, const struct pkg_manifest *old, const struct fetched *f,
-                       unsigned long *placed, unsigned long *dropped, unsigned long *kept)
+                       unsigned long *placed, unsigned long *dropped, unsigned long *kept,
+                       int takeover)
 {
     const struct pkg_manifest *m = &f->m;
     struct walk_ctx wc;
     struct stage_ctx sc;
     char *staging, *dbp;
     unsigned long adopted;  /* files already there, byte for byte the package's */
+    unsigned long taken;    /* TAKEOVER: files there with other content, replaced */
     struct installed others;/* loaded when a file is already there */
     int others_loaded = 0;
     unsigned long same;     /* files the old and new versions share, intact on disk */
@@ -1924,6 +1926,7 @@ static int apply_steps(const char *root, const struct pkg_manifest *old, const s
     if (keep == NULL)
         return refuse("out of memory");
     adopted = 0;
+    taken = 0;
     same = 0;
     resumed = 0;
     others.m = NULL;
@@ -1978,13 +1981,20 @@ static int apply_steps(const char *root, const struct pkg_manifest *old, const s
                 free(keep);
                 return 1;
             }
-            if (there) {
+            if (there && !takeover) {
                 free(keep);
                 installed_free(&others);
                 return refuse_c(15, "\"%s\" already exists in %s with other content than %s %s "
                               "ships, and no installed package lists it; nothing was changed. It "
-                              "may be the requester's own file, or another version's",
+                              "may be the requester's own file, or another version's. TAKEOVER "
+                              "makes it the package's, for a root set up outside pkg",
                               m->files[i].path, root, m->name, m->version);
+            }
+            if (there) {
+                /* TAKEOVER: a root set up outside pkg, as the development
+                 * copier left this one. The file is placed like any other
+                 * and the package owns it from here on. */
+                taken++;
             }
         } else if ((fs = file_state(root, of->path, of->digest, of->size)) == 0) {
             if (strcmp(of->digest, m->files[i].digest) == 0 && of->size == m->files[i].size) {
@@ -2010,6 +2020,11 @@ static int apply_steps(const char *root, const struct pkg_manifest *old, const s
         if (machine) kv("adopted", "%lu", adopted);
         else say_item("adopted", "%lu file%s already there, identical to %s %s's", adopted,
                  adopted == 1 ? "" : "s", m->name, m->version);
+    }
+    if (taken) {
+        if (machine) kv("taken-over", "%lu", taken);
+        else say_item("taken over", "%lu file%s already there with other content, replaced by %s %s's",
+                 taken, taken == 1 ? "" : "s", m->name, m->version);
     }
     if (resumed) {
         if (machine) kv("resumed-files", "%lu", resumed);
@@ -2225,11 +2240,11 @@ static int apply_steps(const char *root, const struct pkg_manifest *old, const s
 
 /* The steps apply began and did not end, ended with its result. */
 static int apply(const char *root, const struct pkg_manifest *old, const struct fetched *f,
-                 unsigned long *placed, unsigned long *dropped, unsigned long *kept)
+                 unsigned long *placed, unsigned long *dropped, unsigned long *kept, int takeover)
 {
     int d = ev_depth();
     apply_touched = 0;
-    return ev_unwind(d, apply_steps(root, old, f, placed, dropped, kept));
+    return ev_unwind(d, apply_steps(root, old, f, placed, dropped, kept, takeover));
 }
 
 /* ---- dependencies ----------------------------------------------------- */
@@ -2558,7 +2573,8 @@ int run_plan(struct plan *p, const struct pkg_manifest *cur,
         snprintf(when, sizeof when, "before placing %s %s%s", p->f[i].m.name, p->f[i].m.version,
                  i > 0 ? "; what this operation had placed was taken back out" : "");
         apply_touched = 0;
-        if (cancelled(when) || apply(p->root, last ? cur : NULL, &p->f[i], &pl, &dr, &ke) != 0) {
+        if (cancelled(when) || apply(p->root, last ? cur : NULL, &p->f[i], &pl, &dr, &ke,
+                                     p->takeover) != 0) {
             /* The package refused while being placed stays as far as it got:
              * the same operation repeated finishes it. Said, not hidden. */
             if (!dry_run && apply_touched)
@@ -2636,6 +2652,7 @@ int plan_target(struct plan *p, const struct pkg_options *a, const struct index 
     p->acceptkey = a->acceptkey;
     p->key = a->key;
     p->ix = ix;
+    p->takeover = a->takeover;
     if (a->key != NULL && !pkg_is_key_hex(a->key))
         return refuse_c(20, "KEY is the publisher's public key: 64 lowercase hexadecimal digits");
     /* The caller picked `exact` and traced why. */

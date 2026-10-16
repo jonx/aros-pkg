@@ -292,7 +292,7 @@ static int env_verb(const struct pkg_sink *s, const struct pkg_options *a)
 
 static const struct verb verbs[] = {
     { "Installing and keeping software", "INSTALL", "install", pkg_install,
-      "PACKAGE/M/A,ROOT/K/R,AT/K,CHANNEL/K,VERSION/K,ARCH/K,KEY/K=<public key>,ACCEPTKEY/K,UNPACKED/K,DOWNGRADE/S,DRYRUN/S" TMPL_ROOTED,
+      "PACKAGE/M/A,ROOT/K/R,AT/K,CHANNEL/K,VERSION/K,ARCH/K,KEY/K=<public key>,ACCEPTKEY/K,UNPACKED/K,DOWNGRADE/S,TAKEOVER/S,DRYRUN/S" TMPL_ROOTED,
       "install packages and what they depend on; several names go as far as they can" },
     { NULL, "STATUS", "status", pkg_status,
       "PACKAGE,ROOT/K/R,CHANNEL/K,ARCH/K" TMPL_ROOTED,
@@ -425,6 +425,7 @@ static const struct { const char *kw; size_t off; } kws[] = {
 static const struct { const char *sw; size_t off; } sws[] = {
     { "DRYRUN",    offsetof(struct pkg_options, dryrun) },
     { "DOWNGRADE", offsetof(struct pkg_options, downgrade) },
+    { "TAKEOVER",  offsetof(struct pkg_options, takeover) },
     { "ORPHANS",   offsetof(struct pkg_options, orphans) },
     { "ALL",       offsetof(struct pkg_options, all) },
     { "SSH",       offsetof(struct pkg_options, ssh) },

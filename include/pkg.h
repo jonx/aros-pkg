@@ -458,6 +458,12 @@ struct pkg_options {
     int metadata;           /* show: manifests, signatures and payloads only; source archives
                                are not read, and their entries say archive: unchecked */
     int downgrade;          /* upgrade: moving to an older version was asked for */
+    int takeover;           /* install: a root set up outside pkg (copied by hand, by an
+                               installer) comes under it as it is: a file already there with
+                               other content than the package's, and listed by no installed
+                               package, is replaced and becomes the package's, instead of
+                               refusing the install (15). A file another package lists
+                               stays a refusal: one file has one owner */
     int orphans;            /* remove: remove what nothing needs, instead of target */
     int dryrun;             /* every check, no write; results read would-... */
     int ssh;                /* sign, keyinfo: OpenSSH's formats, for ssh-keygen -Y verify */

@@ -435,6 +435,7 @@ struct plan {
     const char     *root, *acceptkey;
     const char     *key;         /* KEY: the publisher's key for the named package */
     const struct index *ix;
+    int             takeover;    /* TAKEOVER: files there with other content become the package's */
 };
 
 struct cand {

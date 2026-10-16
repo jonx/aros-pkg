@@ -416,6 +416,19 @@ refusal() {  # refusal <name> <code> <class> <what>
     ok $? "$5 exits $2 and says class $4, code $2"
 }
 mrun x1 INSTALL hello ROOT "$M" CHANNEL "$CH" MACHINE;          refusal x1 15 $? conflict "a second install"
+# A root set up outside pkg: the package's path holds other content. Refused,
+# and with TAKEOVER the file becomes the package's, byte for byte.
+TO="$T/takeover"; mkdir -p "$TO/C"; printf 'an older build' > "$TO/C/Hello"
+mrun t1 INSTALL hello VERSION 1.2 ROOT "$TO" CHANNEL "$CH" MACHINE; refusal t1 15 $? conflict "a differing file in the root"
+has "$T/t1.o" 'TAKEOVER';                             ok $? "and the reason names TAKEOVER"
+! cmp -s "$TO/C/Hello" "$D/C/Hello";                  ok $? "the file was not touched"
+mrun t2 INSTALL hello VERSION 1.2 ROOT "$TO" CHANNEL "$CH" TAKEOVER MACHINE
+                                                      ok $? "TAKEOVER installs"
+has "$T/t2.o" '^result: installed$' && has "$T/t2.o" '^taken-over: 1$'
+                                                      ok $? "and counts the file taken over"
+cmp -s "$TO/C/Hello" "$D/C/Hello";                    ok $? "the file now holds the package's bytes"
+mrun t3 VERIFY hello ROOT "$TO" MACHINE && has "$T/t3.o" '^result: intact$'
+                                                      ok $? "and the root verifies intact"
 mrun x2 INSTALL nosuch ROOT "$M" CHANNEL "$CH" MACHINE;         refusal x2 11 $? not-found "an unknown package"
 mrun x3 UPGRADE hello ROOT "$M" CHANNEL "$CH" MACHINE;          refusal x3 14 $? key "1.4 from another key"
 has "$T/x3.o" "^reason: .*$EVILPUB";                  ok $? "the one-line reason still names the new signer"

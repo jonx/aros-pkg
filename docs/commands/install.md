@@ -5,7 +5,7 @@
 
 Install a package and what it depends on.
 ```
-pkg INSTALL <name>... ROOT <root> [AT <dir>] [CHANNEL <channel>] [VERSION v] [ARCH cpu] [KEY <public key>] [ACCEPTKEY <key>] [UNPACKED <dir>] [DOWNGRADE] [DRYRUN]
+pkg INSTALL <name>... ROOT <root> [AT <dir>] [CHANNEL <channel>] [VERSION v] [ARCH cpu] [KEY <public key>] [ACCEPTKEY <key>] [UNPACKED <dir>] [DOWNGRADE] [TAKEOVER] [DRYRUN]
 ```
 
 ## What it does
@@ -19,7 +19,12 @@ root and records the package in the root's database (`.pkg/`).
   nothing is written, and the package is recorded as installed. This is how
   a system copied by hand comes under pkg afterwards.
 - A file already in place with other content, belonging to no package, is a
-  conflict (exit 15): pkg overwrites nothing it did not install.
+  conflict (exit 15): pkg overwrites nothing it did not install. `TAKEOVER`
+  is the requester saying that the root was set up outside pkg (copied by
+  hand, by an installer, by a development copier) and is to come under it as
+  it is: such a file is replaced and becomes the package's, and the answer
+  counts it (`taken-over:`). A file another installed package lists stays a
+  conflict: one file has one owner.
 - A package installed only as a dependency is marked so; `REMOVE ORPHANS`
   takes it out when nothing needs it any more. Installing it explicitly
   later keeps it for itself.

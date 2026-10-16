@@ -23,7 +23,7 @@ that run, what it records, its refusals ([all of them](commands/README.md)).
 
 | Verb | Form | Does |
 |---|---|---|
-| [`INSTALL`](commands/install.md) | `INSTALL <name>... ROOT <root> [AT <dir>] [CHANNEL <channel>] [VERSION v] [ARCH cpu] [KEY <public key>] [ACCEPTKEY <key>] [UNPACKED <dir>] [DOWNGRADE] [DRYRUN]` | Installs a package and what it depends on. Takes over files already present that are identical to the package's. Several names are installed in turn, as far as the command can get. |
+| [`INSTALL`](commands/install.md) | `INSTALL <name>... ROOT <root> [AT <dir>] [CHANNEL <channel>] [VERSION v] [ARCH cpu] [KEY <public key>] [ACCEPTKEY <key>] [UNPACKED <dir>] [DOWNGRADE] [TAKEOVER] [DRYRUN]` | Installs a package and what it depends on. Takes over files already present that are identical to the package's, and with `TAKEOVER` the ones that differ too. Several names are installed in turn, as far as the command can get. |
 | [`UPGRADE`](commands/upgrade.md) | `UPGRADE <name> ROOT <root> [CHANNEL <channel>] [VERSION v] [ARCH cpu] [DOWNGRADE] [KEY <public key>] [ACCEPTKEY <key>] [UNPACKED <dir>] [DRYRUN]` | Moves an installed package to the newest version, or to `VERSION`; an older one only with `DOWNGRADE`. |
 | [`UPGRADE ALL`](commands/upgrade.md) | `UPGRADE ALL ROOT <root> [CHANNEL <channel>] [ARCH cpu]` | Upgrades every package that has a newer version, as far as it can; never downgrades, never accepts a new key. |
 | [`ROLLBACK`](commands/rollback.md) | `ROLLBACK <name> ROOT <root> [CHANNEL <channel>] [VERSION v] [ARCH cpu] [KEY <public key>] [ACCEPTKEY <key>] [DRYRUN]` | Returns a package to the version installed before its last change. |
@@ -128,6 +128,7 @@ missing one.
 | `ADD`, `LIST`, `REMOVE` | `CHANNEL`: add a channel to the root's list, show the list, take one off it |
 | `ORPHANS` | `REMOVE ORPHANS` |
 | `DOWNGRADE` | allows `UPGRADE` to an older version |
+| `TAKEOVER` | `INSTALL` into a root set up outside pkg: a file already there with other content, listed by no installed package, is replaced and becomes the package's |
 | `DRYRUN` | runs every check of a verb that changes something, and changes nothing |
 | `METADATA` | `SHOW`: checks everything but archives |
 | `MACHINE` | answers in `key: value` lines (below) |
