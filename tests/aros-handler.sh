@@ -27,7 +27,7 @@
 set -u
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-aros_tree="${AROS_BUILD:-$HOME/aros-build}/bin/darwin-aarch64/AROS"
+aros_tree="${AROS_BUILD:-$HOME/Source/aros-project/aros-build}/bin/darwin-aarch64/AROS"
 control="${MACAROS_ROOT:-$repo_root/../Macaros}/graft/aros-ctl"
 host_pkg="$repo_root/build/pkg"
 v14="${PKG_HANDLER_V14:?set PKG_HANDLER_V14 to a revision 14 handler package}"

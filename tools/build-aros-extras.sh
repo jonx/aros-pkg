@@ -20,12 +20,12 @@
 # left mmake regenerating their dependencies in an endless loop, which is how
 # the first version of this script failed.
 #
-#   AROS_BUILD=~/aros-build sh tools/build-aros-extras.sh
+#   AROS_BUILD=~/Source/aros-project/aros-build sh tools/build-aros-extras.sh
 
 set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-aros_build=${AROS_BUILD:-"$HOME/aros-build"}
+aros_build=${AROS_BUILD:-"$HOME/Source/aros-project/aros-build"}
 tree="bin/darwin-aarch64/AROS"
 out="$repo_root/build/aros"
 work=$(mktemp -d "${TMPDIR:-/tmp}/pkg-extras.XXXXXX")

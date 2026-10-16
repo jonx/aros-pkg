@@ -19,7 +19,7 @@
 # it, and refuses to run while another instance is up.
 set -u
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-aros_build=${AROS_BUILD:-"$HOME/aros-build"}
+aros_build=${AROS_BUILD:-"$HOME/Source/aros-project/aros-build"}
 aros_tree="$aros_build/bin/darwin-aarch64/AROS"
 macaros_root=${MACAROS_ROOT:-"$repo_root/../Macaros"}
 [ -x "$macaros_root/graft/aros-ctl" ] || macaros_root="$HOME/aros-next/research/src/Macaros"

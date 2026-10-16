@@ -15,8 +15,8 @@ set -eu
 verflags="-DPKG_VERSION_PATCH=\"${PATCH:-0}\" -DPKG_BUILD=\"${BUILD:-$(date -u +%Y%m%d)}\" -DPKG_BUILD_DAY=\"${BUILDDAY:-$(date -u +%d.%m.%Y)}\""
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-aros_build=${AROS_BUILD:-"$HOME/aros-build"}
-aros_crosstools=${AROS_CROSSTOOLS:-"$HOME/aros-crosstools"}
+aros_build=${AROS_BUILD:-"$HOME/Source/aros-project/aros-build"}
+aros_crosstools=${AROS_CROSSTOOLS:-"$HOME/Source/aros-project/aros-crosstools"}
 sdk=${PKG_AROS_SDK_ROOT:-"$aros_build/bin/darwin-aarch64"}
 build_tools=${PKG_AROS_BUILD_TOOLS_ROOT:-"$sdk/tools"}
 aros_target=${PKG_AROS_TARGET:-aarch64-unknown-aros}

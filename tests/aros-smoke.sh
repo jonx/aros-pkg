@@ -14,7 +14,7 @@
 set -u
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-aros_build=${AROS_BUILD:-"$HOME/aros-build"}
+aros_build=${AROS_BUILD:-"$HOME/Source/aros-project/aros-build"}
 aros_tree="$aros_build/bin/darwin-aarch64/AROS"
 macaros_root=${MACAROS_ROOT:-"$repo_root/../Macaros"}
 control="$macaros_root/graft/aros-ctl"

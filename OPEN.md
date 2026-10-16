@@ -41,7 +41,7 @@ step in `tools/build-aros-regina.sh`, decode a dead-end alert in
   native system a RAM: directory added to `LIBS:` is not searched by the
   library loader. Worth a look in dos.library before an upstream report.
 - **m68k**, later, at the owner's request: an Amiga emulator (UAE) with the
-  AROS m68k build in `~/aros-m68k-build`; QEMU does not emulate an Amiga.
+  AROS m68k build in `~/Source/aros-project/aros-m68k-build`; QEMU does not emulate an Amiga.
 
 ## Pkg, not built yet
 

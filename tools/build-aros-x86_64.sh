@@ -28,7 +28,7 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 main_root=$(cd "$repo_root" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git$||')
 aros_src=${AROS_SRC:-"$repo_root/../aros-upstream"}
 [ -d "$aros_src" ] || [ -z "$main_root" ] || aros_src="$main_root/../aros-upstream"
-hosted_env=${AROS_HOSTED_ENV:-"$HOME/aros-build/bin/darwin-aarch64/gen/tools/collect-aros/env.h"}
+hosted_env=${AROS_HOSTED_ENV:-"$HOME/Source/aros-project/aros-build/bin/darwin-aarch64/gen/tools/collect-aros/env.h"}
 llvm=${LLVM:-/opt/homebrew/opt/llvm}
 sdk=${AROS_X86_64_SDK:-$(ls -d "$HOME"/aros-native/AROS-*-linux-x86_64-system/Developer 2>/dev/null | tail -1)}
 mbedtls="$repo_root/third_party/mbedtls"

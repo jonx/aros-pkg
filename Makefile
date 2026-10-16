@@ -302,7 +302,7 @@ test-ubsan:
 
 # A big-endian COMPILE of the portable core. Running on a big-endian target is
 # separate work and is not claimed here.
-M68K_CC ?= $(HOME)/aros-m68k-build/bin/darwin-aarch64/tools/crosstools/m68k-aros-gcc
+M68K_CC ?= $(HOME)/Source/aros-project/aros-m68k-build/bin/darwin-aarch64/tools/crosstools/m68k-aros-gcc
 
 check-m68k:
 	@if [ -x "$(M68K_CC)" ]; then \
@@ -316,8 +316,8 @@ check-m68k:
 		echo "check-m68k: SKIP, no m68k compiler at $(M68K_CC)"; \
 	fi
 
-# The client on hosted AROS: needs the AROS build under ~/aros-build, the
-# crosstools under ~/aros-crosstools, and no hosted instance already running.
+# The client on hosted AROS: needs the AROS build under ~/Source/aros-project/aros-build, the
+# crosstools under ~/Source/aros-project/aros-crosstools, and no hosted instance already running.
 # Kept out of `check` because it boots an operating system.
 check-aros: build/pkg
 	@sh tools/build-aros.sh

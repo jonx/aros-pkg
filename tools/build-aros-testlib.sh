@@ -7,8 +7,8 @@
 # build/aros/pkgtest-2.30.library. Same toolchain as tools/build-aros.sh.
 set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-aros_build=${AROS_BUILD:-"$HOME/aros-build"}
-aros_crosstools=${AROS_CROSSTOOLS:-"$HOME/aros-crosstools"}
+aros_build=${AROS_BUILD:-"$HOME/Source/aros-project/aros-build"}
+aros_crosstools=${AROS_CROSSTOOLS:-"$HOME/Source/aros-project/aros-crosstools"}
 sdk="$aros_build/bin/darwin-aarch64"
 developer="$sdk/AROS/Developer"
 mkdir -p "$repo_root/build/aros"

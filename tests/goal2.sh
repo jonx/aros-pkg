@@ -30,7 +30,7 @@ set -u
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 control="${MACAROS_ROOT:-$repo_root/../Macaros}/graft/aros-ctl"
-aros_tree=${AROS_TREE:-"$HOME/aros-build/bin/darwin-aarch64/AROS"}
+aros_tree=${AROS_TREE:-"$HOME/Source/aros-project/aros-build/bin/darwin-aarch64/AROS"}
 host_pkg="$repo_root/build/pkg"
 b="$repo_root/build/aros"
 work=$(mktemp -d "${TMPDIR:-/tmp}/pkg-goal2.XXXXXX")

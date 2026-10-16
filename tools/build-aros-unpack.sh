@@ -16,8 +16,8 @@ set -eu
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 src=${AROS_UNPACK_SRC:-"$repo_root/../aros-apple-core/workbench/c/Unpack"}
-aros_build=${AROS_BUILD:-"$HOME/aros-build"}
-aros_crosstools=${AROS_CROSSTOOLS:-"$HOME/aros-crosstools"}
+aros_build=${AROS_BUILD:-"$HOME/Source/aros-project/aros-build"}
+aros_crosstools=${AROS_CROSSTOOLS:-"$HOME/Source/aros-project/aros-crosstools"}
 sdk=${PKG_AROS_SDK_ROOT:-"$aros_build/bin/darwin-aarch64"}
 build_tools=${PKG_AROS_BUILD_TOOLS_ROOT:-"$sdk/tools"}
 aros_target=${PKG_AROS_TARGET:-aarch64-unknown-aros}
